@@ -1,0 +1,13 @@
+# My wallpapers: one link per line. Lines starting with # are ignored.
+#
+# Use DIRECT links to a video (.mp4 / .webm) or image (.jpg / .png / .webp)
+# that you have the right to use - for example your own uploads, or files
+# from free-to-use sites such as Pexels or Pixabay (use their "download"
+# link, not the page link). YouTube page links will not work.
+#
+# Edit this file on github.com from your phone; the TV picks up changes
+# within a few hours (jsDelivr caching), or set the "Links file" setting to
+# this file's "Raw" link for near-instant updates.
+#
+# Example (remove the # to enable):
+# https://example.com/my-anime-loop-4k.mp4

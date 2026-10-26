@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ambient</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;600&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Background layers: only one is visible at a time -->
+  <canvas id="scene"></canvas>
+  <div id="photo" class="layer">
+    <div class="slide" id="slideA"><img alt=""></div>
+    <div class="slide" id="slideB"><img alt=""></div>
+  </div>
+  <video id="video" class="layer" muted loop playsinline></video>
+  <div id="card" class="layer"></div>
+
+  <div id="shade"></div>
+  <div id="caption"></div>
+
+  <!-- Clock / date / weather -->
+  <div id="hud">
+    <div id="clock"></div>
+    <div id="date"></div>
+    <div id="weather"><span id="wIcon"></span><span id="wTemp"></span><span id="wText"></span></div>
+  </div>
+
+  <div id="dim"></div>
+  <div id="toast"></div>
+
+  <!-- App dock (Down button) and the full app grid -->
+  <div id="dock"><div id="dockRow"></div><div class="dock-hint">◀ ▶ choose · OK open · Back close</div></div>
+  <div id="grid">
+    <div class="grid-head">All apps<span>OK open · Red or ▶❙❙ add/remove from dock · Back</span></div>
+    <div id="gridList"></div>
+  </div>
+
+  <!-- Wallpaper picker (Settings → Choose a wallpaper) -->
+  <div id="picker">
+    <div class="grid-head">Choose a wallpaper<span>Arrows move · OK set as wallpaper · Back</span></div>
+    <div id="pickerList"></div>
+  </div>
+
+  <!-- Settings panel (OK button on the remote) -->
+  <div id="menu" class="hidden">
+    <div class="menu-head">
+      <div class="menu-title">Ambient settings</div>
+      <div class="menu-hint">▲▼ choose · ◀▶ change · OK edit · Back close</div>
+    </div>
+    <ul id="menuList"></ul>
+    <input id="textInput" type="text" autocomplete="off">
+  </div>
+
+  <script src="art-list.js"></script>
+  <script src="scenes.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "tv-ambient",
+  "version": "1.0.0",
+  "description": "Ambient / Art mode for Samsung Tizen TVs: animated anime-style scenes, public-domain paintings, nature photos, your own video loops, clock, date and weather.",
+  "packageType": "app",
+  "appName": "Ambient",
+  "appPath": "app/index.html",
+  "serviceFile": "service/service.js",
+  "keys": [
+    "ColorF0Red",
+    "ColorF1Green",
+    "ColorF2Yellow",
+    "ColorF3Blue",
+    "MediaPlayPause",
+    "Info"
+  ],
+  "license": "MIT"
+}

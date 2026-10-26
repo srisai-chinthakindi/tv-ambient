@@ -1,0 +1,276 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: "Outfit", "Samsung One", "Helvetica Neue", Arial, sans-serif;
+  cursor: none;
+}
+
+#scene, .layer {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+}
+#scene { display: block; }
+.layer { display: none; }
+.layer.on { display: block; }
+
+/* ---------- Photos / paintings (two slides that cross-fade) ---------- */
+#photo { background: #0b0b0d; }
+.slide {
+  position: absolute; inset: 0;
+  opacity: 0;
+  transition: opacity 2.5s ease;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.slide.show { opacity: 1; }
+.slide img { display: block; }
+
+/* Nature: fill the screen and drift slowly (Ken Burns) */
+.slide.cover img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  animation: drift 60s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  from { transform: scale(1.0) translate(0, 0); }
+  to   { transform: scale(1.08) translate(-1.5%, -1%); }
+}
+
+/* Paintings: Frame-TV style mat around the artwork */
+.slide.art { padding: 7vh 9vw; }
+.slide.art.mat-light { background: #ece8e1; }
+.slide.art.mat-dark  { background: #141414; }
+.slide.art.mat-none  { background: #000; padding: 0; }
+.slide.art img {
+  max-width: 100%; max-height: 100%;
+  object-fit: contain;
+  box-shadow: 0 2vh 6vh rgba(0,0,0,.45);
+}
+.slide.art.mat-light img { outline: 1.2vh solid #fbfaf7; }
+.slide.art.mat-none img { box-shadow: none; }
+
+video.layer { object-fit: cover; background: #000; }
+
+#caption {
+  position: fixed; left: 4vw; bottom: 3.5vh;
+  max-width: 50vw;
+  font-size: 1.6vh; font-weight: 300; letter-spacing: .03em;
+  color: rgba(255,255,255,.75);
+  text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  opacity: 0; transition: opacity 1.5s;
+}
+#caption.show { opacity: 1; }
+#caption.on-light { color: rgba(30,30,30,.7); text-shadow: none; }
+#caption b { font-weight: 400; display: block; font-size: 1.9vh; margin-bottom: .3vh; }
+
+/* Soft shadow behind the clock and caption on bright photos */
+#shade {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 45vh;
+  background: linear-gradient(to top, rgba(0,0,0,.45), rgba(0,0,0,0));
+  pointer-events: none; opacity: 0; transition: opacity 2s;
+}
+body.photo #shade { opacity: 1; }
+
+/* On the gallery-white mat the overlay switches to dark ink */
+body.light #hud { color: #2b2a28; text-shadow: none; }
+
+/* ---------- Clock / date / weather ---------- */
+#hud {
+  position: fixed;
+  text-shadow: 0 2px 18px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.35);
+  transition: transform 3s ease, opacity 1s;
+  line-height: 1;
+}
+#hud.pos-br { right: 5vw; bottom: 7vh; text-align: right; }
+#hud.pos-bl { left: 5vw; bottom: 7vh; text-align: left; }
+#hud.pos-tr { right: 5vw; top: 7vh; text-align: right; }
+#hud.pos-tl { left: 5vw; top: 7vh; text-align: left; }
+#hud.pos-c  { left: 50%; top: 50%; text-align: center; margin-left: -25vw; width: 50vw; margin-top: -10vh; }
+
+#clock { font-weight: 200; letter-spacing: -.02em; }
+#clock .ampm { font-size: .32em; font-weight: 300; margin-left: .2em; letter-spacing: .05em; }
+#clock .sec { font-size: .4em; opacity: .6; margin-left: .15em; }
+#hud.size-s #clock { font-size: 8vh; }
+#hud.size-m #clock { font-size: 13vh; }
+#hud.size-l #clock { font-size: 20vh; }
+
+#date { font-weight: 300; letter-spacing: .12em; text-transform: uppercase; opacity: .85; margin-top: 1.6vh; }
+#hud.size-s #date { font-size: 1.8vh; }
+#hud.size-m #date { font-size: 2.3vh; }
+#hud.size-l #date { font-size: 3vh; }
+
+#weather { margin-top: 1.4vh; font-weight: 300; opacity: .9; display: flex; align-items: center; gap: .6vw; }
+#hud.pos-br #weather, #hud.pos-tr #weather { justify-content: flex-end; }
+#hud.pos-c #weather { justify-content: center; }
+#hud.size-s #weather { font-size: 1.9vh; }
+#hud.size-m #weather { font-size: 2.4vh; }
+#hud.size-l #weather { font-size: 3.1vh; }
+#wIcon svg { width: 1.5em; height: 1.5em; display: block; }
+#wTemp { font-weight: 400; }
+#wText { opacity: .75; }
+
+.hidden { display: none !important; }
+
+/* ---------- Dimmer ---------- */
+#dim {
+  position: fixed; inset: 0; background: #000;
+  pointer-events: none; opacity: 0;
+  transition: opacity 4s ease;
+}
+
+#toast {
+  position: fixed; top: 5vh; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(10,10,14,.75);
+  backdrop-filter: blur(8px);
+  padding: 1.4vh 2.4vw; border-radius: 10vh;
+  font-size: 2vh; font-weight: 300; letter-spacing: .04em;
+  opacity: 0; transition: opacity .4s;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* ---------- App dock and grid ---------- */
+#dock {
+  position: fixed; left: 50%; bottom: 5vh;
+  transform: translate(-50%, 4vh);
+  max-width: 92vw;
+  padding: 2.2vh 1.6vw 1.4vh;
+  background: rgba(14,14,20,.72);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 3vh;
+  opacity: 0; pointer-events: none;
+  transition: opacity .35s, transform .35s;
+}
+#dock.show { opacity: 1; transform: translate(-50%, 0); }
+#dockRow { display: flex; gap: 1vw; overflow: hidden; padding: 1.4vh .6vw; }
+.dock-hint { text-align: center; font-size: 1.4vh; opacity: .45; margin-top: 1.2vh; letter-spacing: .04em; }
+.tile { width: 7.4vw; flex: none; text-align: center; transition: transform .2s; }
+.tile .icon {
+  width: 7.4vw; height: 7.4vw; max-width: 13vh; max-height: 13vh; margin: 0 auto;
+  border-radius: 2vh; background: rgba(255,255,255,.08);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border: 3px solid transparent;
+}
+.tile .icon img { width: 100%; height: 100%; object-fit: cover; }
+.tile .letter { font-size: 5vh; font-weight: 300; opacity: .8; }
+.tile .name { font-size: 1.7vh; margin-top: 1vh; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile.sel { transform: scale(1.1); }
+.tile.sel .icon { border-color: #fff; box-shadow: 0 1vh 4vh rgba(0,0,0,.5); }
+.tile.sel .name { opacity: 1; }
+.tile.pinned .icon::after { content: "★"; position: absolute; margin: -7vh 0 0 7vw; font-size: 2vh; }
+.tile.pinned .icon { position: relative; outline: 2px solid rgba(255,214,102,.7); outline-offset: -2px; }
+
+#grid {
+  position: fixed; inset: 0;
+  background: rgba(8,8,12,.92);
+  backdrop-filter: blur(20px);
+  padding: 7vh 6vw;
+  display: none; flex-direction: column;
+}
+#grid.show { display: flex; }
+.grid-head { font-size: 3.4vh; margin-bottom: 4vh; display: flex; justify-content: space-between; align-items: baseline; }
+.grid-head span { font-size: 1.6vh; opacity: .5; }
+#gridList { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4vh 2vw; overflow: hidden; flex: 1; align-content: start; padding: 1vh; }
+#gridList .tile { width: auto; }
+
+/* Quick shuffles (seconds) need a shorter cross-fade */
+body.fast .slide { transition: opacity .8s ease; }
+
+/* ---------- Wallpaper picker ---------- */
+#picker {
+  position: fixed; inset: 0;
+  background: rgba(8,8,12,.94);
+  backdrop-filter: blur(20px);
+  padding: 7vh 6vw;
+  display: none; flex-direction: column;
+}
+#picker.show { display: flex; }
+#pickerList { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3vh 1.6vw; overflow: hidden; flex: 1; align-content: start; padding: 1vh; }
+.pick { position: relative; border-radius: 1.4vh; overflow: hidden; border: 3px solid transparent; transition: transform .2s; background: #16161d; }
+.pick img, .pick-video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.pick-video { display: flex; align-items: center; justify-content: center; font-size: 5vh; opacity: .6; }
+.pick.sel { border-color: #fff; transform: scale(1.04); box-shadow: 0 1.5vh 5vh rgba(0,0,0,.6); }
+.pick-tag { position: absolute; top: 1vh; left: 1vh; font-size: 1.3vh; letter-spacing: .12em; text-transform: uppercase;
+  background: rgba(0,0,0,.55); padding: .4vh .8vh; border-radius: .6vh; }
+.pick-label { padding: 1vh 1.2vh; font-size: 1.7vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+.pick-loading { grid-column: 1 / -1; font-size: 2.2vh; opacity: .6; }
+
+/* ---------- Settings menu ---------- */
+#menu {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 38vw;
+  background: rgba(12,12,18,.88);
+  backdrop-filter: blur(14px);
+  border-left: 1px solid rgba(255,255,255,.08);
+  padding: 5vh 2.5vw 4vh;
+  display: flex; flex-direction: column;
+}
+.menu-title { font-size: 3.4vh; font-weight: 400; }
+.menu-hint { font-size: 1.6vh; opacity: .55; margin: 1vh 0 2.5vh; letter-spacing: .03em; }
+#menuList { list-style: none; overflow: hidden; flex: 1; position: relative; }
+#menuList li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1.25vh 1.2vw; border-radius: 1vh;
+  font-size: 2.1vh; font-weight: 300;
+}
+#menuList li.section {
+  font-size: 1.5vh; text-transform: uppercase; letter-spacing: .18em;
+  opacity: .45; padding-top: 2.2vh; padding-bottom: .6vh;
+}
+#menuList li .val { opacity: .8; font-weight: 400; max-width: 55%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#menuList li.sel { background: rgba(255,255,255,.14); }
+#menuList li.sel .val::before { content: "◀  "; opacity: .5; }
+#menuList li.sel .val::after  { content: "  ▶"; opacity: .5; }
+#menuList li.sel.text .val::before, #menuList li.sel.text .val::after,
+#menuList li.sel.action .val::before, #menuList li.sel.action .val::after { content: ""; }
+
+#textInput {
+  position: fixed; left: 50%; top: 40%;
+  transform: translate(-50%, -50%);
+  width: 60vw; padding: 2vh 1.5vw;
+  font: inherit; font-size: 3vh;
+  border-radius: 1.2vh; border: 2px solid rgba(255,255,255,.5);
+  background: rgba(10,10,14,.95); color: #fff;
+  display: none;
+}
+#textInput.on { display: block; }
+
+/* ---------- Info cards: trending songs, Netflix picks ---------- */
+#card { overflow: hidden; background: #000; }
+.card-bg {
+  position: absolute; inset: -6%;
+  background-size: cover; background-position: center;
+  filter: blur(60px) saturate(1.3) brightness(.55);
+  animation: drift 60s ease-in-out infinite alternate;
+}
+.card-bg.sharp { inset: 0; filter: brightness(.6); }
+.card-bg.sharp::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(0,0,0,.85) 0%, rgba(0,0,0,.55) 45%, rgba(0,0,0,0) 75%);
+}
+.card-body { position: absolute; left: 6vw; top: 9vh; bottom: 9vh; width: 58vw; display: flex; flex-direction: column; }
+.card-kicker { font-size: 2vh; letter-spacing: .25em; text-transform: uppercase; opacity: .75; margin-bottom: 3vh; }
+.card-foot { margin-top: auto; font-size: 1.4vh; opacity: .45; letter-spacing: .03em; }
+
+.songs { display: flex; gap: 3.5vw; align-items: flex-start; }
+.songs .cover { width: 34vh; height: 34vh; border-radius: 1.2vh; box-shadow: 0 3vh 8vh rgba(0,0,0,.5); flex: none; }
+.songs ol { list-style: none; flex: 1; }
+.songs li { display: flex; align-items: center; gap: 1.2vw; padding: .9vh 0; }
+.songs li .rank { width: 2.2vw; font-size: 2.4vh; font-weight: 200; opacity: .6; text-align: right; }
+.songs li img { width: 5.4vh; height: 5.4vh; border-radius: .6vh; }
+.songs li div { display: flex; flex-direction: column; min-width: 0; }
+.songs li b { font-weight: 400; font-size: 2.2vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.songs li span { font-size: 1.7vh; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.show-title { font-size: 7vh; font-weight: 600; line-height: 1.05; max-width: 48vw; }
+.show-meta { font-size: 2vh; opacity: .75; margin: 1.6vh 0 2vh; letter-spacing: .05em; }
+.show-text { font-size: 2.1vh; font-weight: 300; line-height: 1.5; max-width: 42vw; opacity: .85;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.posters { display: flex; gap: 1vw; margin-top: 4vh; }
+.posters img { height: 22vh; border-radius: .8vh; box-shadow: 0 1.5vh 4vh rgba(0,0,0,.5); }
