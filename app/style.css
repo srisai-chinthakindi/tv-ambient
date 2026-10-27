@@ -201,6 +201,36 @@ body.fast .slide { transition: opacity .8s ease; }
 .pick-label { padding: 1vh 1.2vh; font-size: 1.7vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
 .pick-loading { grid-column: 1 / -1; font-size: 2.2vh; opacity: .6; }
 
+/* ---------- Clock layouts ---------- */
+#clock.stacked { line-height: .86; }
+#clock.stacked .ampm { display: none; }
+
+/* ---------- Spotify mini player (below the clock) ---------- */
+#player {
+  display: flex; align-items: center; gap: 1.2vw;
+  margin-top: 2.2vh; padding: 1.2vh 1.2vw 1.2vh 1.2vh;
+  background: rgba(10,10,14,.45);
+  backdrop-filter: blur(14px);
+  border-radius: 1.6vh;
+  border: 2px solid transparent;
+  text-shadow: none; color: #fff;
+  min-width: 26vw; max-width: 34vw;
+  text-align: left;
+}
+#hud.pos-br #player, #hud.pos-tr #player { margin-left: auto; }
+#hud.pos-c #player { margin-left: auto; margin-right: auto; }
+#player.focus { border-color: rgba(255,255,255,.85); background: rgba(10,10,14,.7); }
+#player img { width: 9vh; height: 9vh; border-radius: 1vh; flex: none; }
+.pl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pl-body b { font-weight: 500; font-size: 2.1vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-body span { font-size: 1.6vh; opacity: .7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: .3vh; }
+.pl-bar { height: .45vh; background: rgba(255,255,255,.2); border-radius: 1vh; margin: 1vh 0 .8vh; overflow: hidden; }
+.pl-bar i { display: block; height: 100%; background: #fff; border-radius: 1vh; }
+.pl-ctl { display: flex; gap: 2vw; font-size: 1.9vh; opacity: .55; }
+.pl-ctl em { font-style: normal; }
+#player.focus .pl-ctl { opacity: 1; }
+#player.focus .pl-ctl .pp { color: #1ed760; }
+
 /* ---------- Settings menu ---------- */
 #menu {
   position: fixed; top: 0; right: 0; bottom: 0;

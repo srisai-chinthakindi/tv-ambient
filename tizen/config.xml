@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Standalone Tizen package for Ambient (installed with TizenBrew Installer → Install from GitHub).
+     Packaging follows Skylight (github.com/SaudSatopay/skylight-tizen, MIT). -->
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://ambient.home/tv" version="1.0.0" viewmodes="maximized">
+    <!-- Wallpapers, weather and Spotify come from the internet; the TV's status service is local. -->
+    <access origin="*" subdomains="true"/>
+    <tizen:application id="AmbientTV1.Ambient" package="AmbientTV1" required_version="3.0"/>
+    <name>Ambient</name>
+    <description>Ambient mode: live wallpapers, daily pictures, art, clock, weather and a Spotify mini player.</description>
+    <content src="index.html"/>
+    <icon src="icon.png"/>
+    <feature name="http://tizen.org/feature/screen.size.all"/>
+    <feature name="http://tizen.org/feature/web.service"/>
+    <!-- Background helper (service/service.js): opens Ambient when the TV is idle, Spotify login, app dock. -->
+    <tizen:service id="AmbientTV1.AmbientHelper" on-boot="true" auto-restart="true">
+        <tizen:content src="service/service.js"/>
+        <tizen:name>AmbientHelper</tizen:name>
+        <tizen:description>Opens Ambient when nothing else is on screen.</tizen:description>
+    </tizen:service>
+    <tizen:profile name="tv-samsung"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.info"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
+    <!-- Reopening Ambient while it runs in the background resumes it instantly instead of reloading. -->
+    <tizen:app-control>
+        <tizen:src name="index.html" reload="disable"/>
+        <tizen:operation name="http://samsung.com/appcontrol/operation/eden_resume"/>
+    </tizen:app-control>
+    <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="enable"
+                   encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>

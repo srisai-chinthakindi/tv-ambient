@@ -27,7 +27,10 @@
     quality: 'standard',
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
-    pins: null, pinned: null
+    pins: null, pinned: null,
+    autoOn: true, autoDelay: 5, autoOverSpotify: true,
+    spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
+    clockFont: 'modern', clockWeight: 'thin', clockColor: 'white', clockStyle: 'inline'
   };
   const STORE_KEY = 'ambient.settings.v1';
 
@@ -429,6 +432,140 @@
     renderPicker();
   }
 
+  /* -------------------- Auto-start (helper on the TV) -------------------- */
+
+  // The TizenBrew service watches what is on screen and reopens Ambient when
+  // nothing (or only Spotify) has been showing for S.autoDelay seconds.
+  function sendAutoConfig() {
+    const cfg = { on: !!S.autoOn, delay: Number(S.autoDelay) || 5, overSpotify: !!S.autoOverSpotify };
+    fetch(SERVICE + '/config?json=' + encodeURIComponent(JSON.stringify(cfg))).catch(() => {});
+  }
+
+  /* ------------------------- Spotify mini player ------------------------- */
+
+  // Spotify login uses PKCE (no secret): the helper opens Spotify's login page
+  // in the TV browser and catches the redirect on http://127.0.0.1:8095/callback.
+  const SPOTIFY_REDIRECT = SERVICE + '/callback';
+  const player = $('player');
+  let spAccess = '', spAccessUntil = 0, spState = null, playerFocus = false;
+
+  function b64url(bytes) {
+    let s = '';
+    bytes.forEach((b) => { s += String.fromCharCode(b); });
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  async function connectSpotify() {
+    if (!S.spotifyClientId) { toast('Add your Spotify Client ID first (see the guide on GitHub)', 5000); return; }
+    const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+    const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    const state = b64url(crypto.getRandomValues(new Uint8Array(12)));
+    const auth = 'https://accounts.spotify.com/authorize?response_type=code&code_challenge_method=S256' +
+      '&client_id=' + encodeURIComponent(S.spotifyClientId) +
+      '&scope=' + encodeURIComponent('user-read-playback-state user-modify-playback-state user-read-currently-playing') +
+      '&redirect_uri=' + encodeURIComponent(SPOTIFY_REDIRECT) +
+      '&code_challenge=' + challenge + '&state=' + state;
+    try {
+      await getJSON(SERVICE + '/open?url=' + encodeURIComponent(auth));
+    } catch (e) {
+      toast('Could not open the browser. Open Ambient from TizenBrew and try again.', 5000);
+      return;
+    }
+    toast('Log in to Spotify in the browser, then come back here', 6000);
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      let res;
+      try { res = await getJSON(SERVICE + '/spotify/result?state=' + state); } catch (e) { continue; }
+      if (res.error) { toast('Spotify login was cancelled', 4000); return; }
+      if (!res.code) continue;
+      const tok = await spotifyToken({ grant_type: 'authorization_code', code: res.code, redirect_uri: SPOTIFY_REDIRECT, code_verifier: verifier });
+      if (tok) { toast('Spotify connected', 3000); renderMenu(); pollPlayer(); }
+      return;
+    }
+    toast('Spotify login timed out', 4000);
+  }
+
+  async function spotifyToken(params) {
+    params.client_id = S.spotifyClientId;
+    const body = Object.keys(params).map((k) => k + '=' + encodeURIComponent(params[k])).join('&');
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body
+    });
+    if (!res.ok) { if (res.status === 400) { S.spotifyRefresh = ''; saveSettings(); } return null; }
+    const t = await res.json();
+    spAccess = t.access_token;
+    spAccessUntil = Date.now() + (t.expires_in - 60) * 1000;
+    if (t.refresh_token) { S.spotifyRefresh = t.refresh_token; saveSettings(); }
+    return t;
+  }
+
+  async function spotifyApi(method, path) {
+    if (!S.spotifyRefresh || !S.spotifyClientId) return null;
+    if (!spAccess || Date.now() > spAccessUntil) {
+      if (!await spotifyToken({ grant_type: 'refresh_token', refresh_token: S.spotifyRefresh })) return null;
+    }
+    const res = await fetch('https://api.spotify.com/v1' + path, { method, headers: { Authorization: 'Bearer ' + spAccess } });
+    if (res.status === 204 || method !== 'GET') return res.ok || res.status === 204 ? {} : null;
+    return res.ok ? res.json() : null;
+  }
+
+  async function pollPlayer() {
+    if (!S.miniPlayer || !S.spotifyRefresh) { spState = null; renderPlayer(); return; }
+    try { spState = await spotifyApi('GET', '/me/player'); } catch (e) { spState = null; }
+    renderPlayer();
+  }
+
+  function renderPlayer() {
+    const item = spState && spState.item;
+    player.classList.toggle('hidden', !item);
+    if (!item) { playerFocus = false; return; }
+    const art = (item.album && item.album.images && item.album.images[item.album.images.length > 1 ? 1 : 0]) || {};
+    const pct = item.duration_ms ? Math.min(100, (spState.progress_ms || 0) / item.duration_ms * 100) : 0;
+    player.classList.toggle('focus', playerFocus);
+    player.innerHTML =
+      (art.url ? '<img src="' + esc(art.url) + '" alt="">' : '') +
+      '<div class="pl-body"><b>' + esc(item.name) + '</b><span>' + esc((item.artists || []).map((a) => a.name).join(', ')) + '</span>' +
+      '<div class="pl-bar"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
+      '<div class="pl-ctl"><em>⏮</em><em class="pp">' + (spState.is_playing ? '❚❚' : '▶') + '</em><em>⏭</em></div></div>';
+  }
+
+  async function playerCommand(cmd) {
+    const playing = spState && spState.is_playing;
+    const ok = cmd === 'prev' ? await spotifyApi('POST', '/me/player/previous')
+      : cmd === 'next' ? await spotifyApi('POST', '/me/player/next')
+      : await spotifyApi('PUT', playing ? '/me/player/pause' : '/me/player/play');
+    if (!ok) toast('Spotify did not accept that (playback control needs Spotify Premium)', 4000);
+    setTimeout(pollPlayer, 600);
+  }
+
+  function playerKey(k) {
+    if (k === K.LEFT) playerCommand('prev');
+    else if (k === K.RIGHT) playerCommand('next');
+    else if (k === K.ENTER || k === K.PLAYPAUSE) playerCommand('toggle');
+    else if (k === K.DOWN || k === K.BACK || k === K.ESC || k === K.BACKSPACE) { playerFocus = false; renderPlayer(); }
+  }
+
+  /* ----------------------- Clock style (Mac-like) ------------------------ */
+
+  const CLOCK_FONTS = {
+    modern: '"Outfit", sans-serif',
+    classic: '"Fraunces", Georgia, serif',
+    rounded: '"Nunito", sans-serif',
+    mono: '"JetBrains Mono", monospace',
+    condensed: '"Bebas Neue", "Outfit", sans-serif'
+  };
+  const CLOCK_COLORS = { white: '#ffffff', warm: '#ffe2b8', rose: '#ffc4d6', mint: '#b9f5dc', sky: '#bcdcff', gold: '#ffd36b' };
+  const CLOCK_WEIGHTS = { thin: 200, regular: 400, bold: 700 };
+
+  function applyClockStyle() {
+    const clock = $('clock');
+    clock.style.fontFamily = CLOCK_FONTS[S.clockFont] || CLOCK_FONTS.modern;
+    clock.style.fontWeight = CLOCK_WEIGHTS[S.clockWeight] || 200;
+    // On the white gallery mat a white clock would vanish; keep the dark ink there.
+    hud.style.color = document.body.classList.contains('light') && S.clockColor === 'white' ? '' : (CLOCK_COLORS[S.clockColor] || '#fff');
+    clock.classList.toggle('stacked', S.clockStyle === 'stacked');
+  }
+
   /* ---------------------------- Display --------------------------------- */
 
   let activeSlide = 0;
@@ -447,6 +584,7 @@
     current = item;
     caption.classList.remove('show', 'on-light');
     document.body.classList.toggle('light', item.kind === 'art' && S.artMat === 'light');
+    applyClockStyle();
     document.body.classList.toggle('photo', ['nature', 'video', 'wallimg', 'card'].indexOf(item.kind) >= 0 || (item.kind === 'art' && S.artMat === 'none'));
     if (item.kind === 'scene') {
       showLayer('scene');
@@ -597,11 +735,11 @@
     let hr = d.getHours();
     let html;
     if (S.clock24) {
-      html = pad(hr) + ':' + pad(d.getMinutes());
+      html = pad(hr) + (S.clockStyle === 'stacked' ? '<br>' : ':') + pad(d.getMinutes());
     } else {
       const ampm = hr < 12 ? 'AM' : 'PM';
       hr = hr % 12 || 12;
-      html = hr + ':' + pad(d.getMinutes()) + '<span class="ampm">' + ampm + '</span>';
+      html = (S.clockStyle === 'stacked' ? pad(hr) + '<br>' : hr + ':') + pad(d.getMinutes()) + '<span class="ampm">' + ampm + '</span>';
     }
     if (S.seconds) html += '<span class="sec">' + pad(d.getSeconds()) + '</span>';
     $('clock').innerHTML = html;
@@ -614,7 +752,8 @@
     $('clock').classList.toggle('hidden', !S.clock);
     $('date').classList.toggle('hidden', !S.date);
     $('weather').classList.toggle('hidden', !S.weather);
-    hud.classList.toggle('hidden', !S.clock && !S.date && !S.weather);
+    hud.classList.toggle('hidden', !S.clock && !S.date && !S.weather && player.classList.contains('hidden'));
+    applyClockStyle();
   }
 
   // Nudge the overlay a few pixels every minute so nothing sits in one spot for hours.
@@ -716,10 +855,24 @@
     { key: 'seconds', label: 'Seconds', options: onOff },
     { key: 'clockSize', label: 'Size', options: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']] },
     { key: 'clockPos', label: 'Position', options: [['br', 'Bottom right'], ['bl', 'Bottom left'], ['tr', 'Top right'], ['tl', 'Top left'], ['c', 'Centre']] },
+    { key: 'clockFont', label: 'Clock font', options: [['modern', 'Modern'], ['classic', 'Classic serif'], ['rounded', 'Rounded'], ['mono', 'Mono'], ['condensed', 'Tall condensed']] },
+    { key: 'clockWeight', label: 'Clock weight', options: [['thin', 'Thin'], ['regular', 'Regular'], ['bold', 'Bold']] },
+    { key: 'clockColor', label: 'Clock colour', options: [['white', 'White'], ['warm', 'Warm'], ['rose', 'Rose'], ['mint', 'Mint'], ['sky', 'Sky'], ['gold', 'Gold']] },
+    { key: 'clockStyle', label: 'Clock layout', options: [['inline', 'Side by side'], ['stacked', 'Stacked']] },
     { key: 'date', label: 'Date', options: onOff },
     { key: 'weather', label: 'Weather', options: onOff },
     { key: 'city', label: 'City', type: 'text', placeholder: 'e.g. Hyderabad' },
     { key: 'units', label: 'Units', options: [['c', '°C'], ['f', '°F']] },
+    { type: 'section', label: 'Auto-start' },
+    { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
+    { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
+    { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
+    { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
+    { type: 'section', label: 'Spotify mini player' },
+    { key: 'miniPlayer', label: 'Mini player', options: onOff },
+    { key: 'spotifyClientId', label: 'Spotify Client ID', type: 'text', placeholder: 'From developer.spotify.com (see guide)' },
+    { label: 'Connect Spotify', type: 'action', run: () => { closeMenu(); connectSpotify(); } },
+    { label: 'Disconnect Spotify', type: 'action', run: () => { S.spotifyRefresh = ''; spAccess = ''; saveSettings(); pollPlayer(); toast('Spotify disconnected'); } },
     { type: 'section', label: 'Display' },
     { key: 'brightness', label: 'Brightness', options: [[100, '100%'], [90, '90%'], [80, '80%'], [70, '70%'], [60, '60%'], [50, '50%'], [40, '40%']] },
     { key: 'nightDim', label: 'Night dimming', options: [['off', 'Off'], ['22-6', '10 PM – 6 AM'], ['23-7', '11 PM – 7 AM'], ['0-6', '12 AM – 6 AM']] },
@@ -803,6 +956,8 @@
 
   function applySetting(item) {
     if (['city', 'units', 'weather'].indexOf(item.key) >= 0) updateWeather();
+    if (/^auto/.test(item.key)) sendAutoConfig();
+    if (item.key === 'miniPlayer') pollPlayer();
     if (item.key === 'caption' && current) render(current);
     if (item.key === 'artMat' && current && current.kind === 'art') render(current);
     if (item.key === 'interval') scheduleRotate();
@@ -934,6 +1089,7 @@
       return;
     }
 
+    if (playerFocus) { e.preventDefault(); playerKey(k); return; }
     if (picking) { e.preventDefault(); pickerKey(k); return; }
     if (view) { e.preventDefault(); dockKey(k); return; }
 
@@ -954,7 +1110,12 @@
       case K.LEFT: e.preventDefault(); prev(); break;
       case K.UP:
         e.preventDefault();
-        S.clock = !S.clock; S.date = S.clock; saveSettings(); applyHud();
+        if (!player.classList.contains('hidden')) {
+          playerFocus = true; renderPlayer();
+          toast('◀ previous · OK play/pause · ▶ next · ▼ done', 3500);
+        } else {
+          S.clock = !S.clock; S.date = S.clock; saveSettings(); applyHud();
+        }
         break;
       case K.DOWN: e.preventDefault(); openDock(); break;
       case K.INFO:
@@ -970,7 +1131,10 @@
       case K.GREEN: quickMode('art', 'Paintings'); break;
       case K.YELLOW: quickMode('nature', 'Nature photos'); break;
       case K.BLUE: quickMode('mix', 'Mix of everything'); break;
-      default: break; // Back and other keys keep their normal TV behaviour
+      case K.BACK:
+        if (standalone()) { e.preventDefault(); try { tizen.application.getCurrentApplication().hide(); } catch (err) { /* ignore */ } }
+        break;
+      default: break; // other keys keep their normal TV behaviour
     }
   });
 
@@ -985,6 +1149,20 @@
         webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF, () => {}, () => {});
       }
     } catch (e) { /* not available here */ }
+  }
+
+  // Installed as its own TV app (tizen/config.xml) rather than as a TizenBrew module?
+  function standalone() {
+    try { return tizen.application.getAppInfo().packageId === 'AmbientTV1'; } catch (e) { return false; }
+  }
+
+  // The helper runs as its own Tizen service when Ambient is a standalone app.
+  function startHelper() {
+    if (!standalone()) return;
+    try {
+      tizen.application.launchAppControl(new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
+        'AmbientTV1.AmbientHelper', () => setTimeout(sendAutoConfig, 1500), () => {});
+    } catch (e) { /* helper unavailable */ }
   }
 
   function registerKeys() {
@@ -1006,12 +1184,16 @@
   });
 
   registerKeys();
+  startHelper();
   keepAwake();
   applyAll();
+  sendAutoConfig();
+  pollPlayer();
+  setInterval(pollPlayer, 4000);
   setInterval(tick, 1000);
   setInterval(pixelShift, 60 * 1000);
   setInterval(updateWeather, 15 * 60 * 1000);
   setInterval(keepAwake, 5 * 60 * 1000);
   next();
-  setTimeout(() => toast('OK: settings  ·  ▼: your apps  ·  ◀ ▶: change', 5000), 1500);
+  setTimeout(() => toast('OK: settings  ·  ▼: your apps  ·  ▲: music  ·  ◀ ▶: change', 5000), 1500);
 })();

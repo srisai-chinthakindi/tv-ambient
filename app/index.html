@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ambient</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;600&family=Fraunces:wght@200;400;700&family=Nunito:wght@200;400;700&family=JetBrains+Mono:wght@200;400;700&family=Bebas+Neue&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,6 +26,7 @@
     <div id="clock"></div>
     <div id="date"></div>
     <div id="weather"><span id="wIcon"></span><span id="wTemp"></span><span id="wText"></span></div>
+    <div id="player" class="hidden"></div>
   </div>
 
   <div id="dim"></div>
@@ -54,6 +55,8 @@
     <input id="textInput" type="text" autocomplete="off">
   </div>
 
+  <!-- Samsung TV APIs (screensaver control); only present when installed as a TV app -->
+  <script src="$WEBAPIS/webapis/webapis.js"></script>
   <script src="art-list.js"></script>
   <script src="scenes.js"></script>
   <script src="app.js"></script>
