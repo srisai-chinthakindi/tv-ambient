@@ -183,7 +183,8 @@ function checkScreen() {
     checking = false;
   });
 }
-setInterval(checkScreen, 1000);
+// Every 2 s is plenty for a 5 s idle delay and keeps the load on the TV low; it does nothing while auto-start is off.
+setInterval(function () { if (auto.on && Date.now() >= auto.pausedUntil) checkScreen(); }, 2000);
 
 function setConfig(res, json) {
   try {
