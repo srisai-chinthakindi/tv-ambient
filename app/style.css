@@ -81,7 +81,7 @@ body.light #hud { color: #2b2a28; text-shadow: none; }
 /* ---------- Clock / date / weather ---------- */
 #hud {
   position: fixed;
-  text-shadow: 0 2px 18px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.35);
+  text-shadow: 0 1px 8px rgba(0,0,0,.45);
   transition: transform 3s ease, opacity 1s;
   line-height: 1;
 }
@@ -125,8 +125,7 @@ body.light #hud { color: #2b2a28; text-shadow: none; }
 #toast {
   position: fixed; top: 5vh; left: 50%;
   transform: translateX(-50%);
-  background: rgba(10,10,14,.75);
-  backdrop-filter: blur(8px);
+  background: rgba(16,16,20,.9);
   padding: 1.4vh 2.4vw; border-radius: 10vh;
   font-size: 2vh; font-weight: 300; letter-spacing: .04em;
   opacity: 0; transition: opacity .4s;
@@ -140,8 +139,7 @@ body.light #hud { color: #2b2a28; text-shadow: none; }
   transform: translate(-50%, 4vh);
   max-width: 92vw;
   padding: 2.2vh 1.6vw 1.4vh;
-  background: rgba(14,14,20,.72);
-  backdrop-filter: blur(18px);
+  background: rgba(18,18,24,.92);
   border: 1px solid rgba(255,255,255,.08);
   border-radius: 3vh;
   opacity: 0; pointer-events: none;
@@ -169,7 +167,6 @@ body.light #hud { color: #2b2a28; text-shadow: none; }
 #grid {
   position: fixed; inset: 0;
   background: rgba(8,8,12,.92);
-  backdrop-filter: blur(20px);
   padding: 7vh 6vw;
   display: none; flex-direction: column;
 }
@@ -186,7 +183,6 @@ body.fast .slide { transition: opacity .8s ease; }
 #picker {
   position: fixed; inset: 0;
   background: rgba(8,8,12,.94);
-  backdrop-filter: blur(20px);
   padding: 7vh 6vw;
   display: none; flex-direction: column;
 }
@@ -209,8 +205,7 @@ body.fast .slide { transition: opacity .8s ease; }
 #player {
   display: flex; align-items: center; gap: 1.2vw;
   margin-top: 2.2vh; padding: 1.2vh 1.2vw 1.2vh 1.2vh;
-  background: rgba(10,10,14,.45);
-  backdrop-filter: blur(14px);
+  background: rgba(14,14,18,.78);
   border-radius: 1.6vh;
   border: 2px solid transparent;
   text-shadow: none; color: #fff;
@@ -288,34 +283,41 @@ body.motion-reduced .slide img { animation: none !important; transform: none !im
 #calibText b { display: block; font-size: 2.4vh; margin-bottom: .6vh; }
 #calibText span { display: block; margin-top: 1vh; font-size: 1.6vh; opacity: .6; }
 
-/* ---------- Settings menu ---------- */
+/* ---------- Settings (tvOS-style two panes, slides in from the right) ---------- */
 #menu {
   position: fixed; top: 0; right: 0; bottom: 0;
-  width: 38vw;
-  background: rgba(12,12,18,.88);
-  backdrop-filter: blur(14px);
-  border-left: 1px solid rgba(255,255,255,.08);
-  padding: 5vh 2.5vw 4vh;
+  width: 58vw;
+  background: rgba(16,16,20,.97);
+  padding: 6vh 3vw 4vh;
   display: flex; flex-direction: column;
+  transform: translateX(100%); visibility: hidden;
+  transition: transform .32s cubic-bezier(.2,.8,.2,1), visibility 0s .32s;
+  will-change: transform;
 }
-.menu-title { font-size: 3.4vh; font-weight: 400; }
-.menu-hint { font-size: 1.6vh; opacity: .55; margin: 1vh 0 2.5vh; letter-spacing: .03em; }
-#menuList { list-style: none; overflow: hidden; flex: 1; position: relative; }
-#menuList li {
+#menu.open { transform: none; visibility: visible; transition: transform .32s cubic-bezier(.2,.8,.2,1); }
+.menu-title { font-size: 3.6vh; font-weight: 600; letter-spacing: -.01em; }
+.menu-hint { font-size: 1.5vh; opacity: .45; margin: .8vh 0 3vh; letter-spacing: .03em; }
+.menu-body { display: flex; gap: 2.2vw; flex: 1; min-height: 0; }
+#menuCats, #menuList { list-style: none; overflow: hidden; }
+#menuCats { width: 17vw; flex: none; }
+#menuList { flex: 1; }
+#menuCats li, #menuList li {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 1.25vh 1.2vw; border-radius: 1vh;
-  font-size: 2.1vh; font-weight: 300;
+  padding: 1.35vh 1.2vw; border-radius: 1.2vh; margin-bottom: .5vh;
+  font-size: 2.2vh; font-weight: 400; color: rgba(255,255,255,.75);
+  transition: background-color .15s, color .15s, transform .15s;
 }
-#menuList li.section {
-  font-size: 1.5vh; text-transform: uppercase; letter-spacing: .18em;
-  opacity: .45; padding-top: 2.2vh; padding-bottom: .6vh;
-}
-#menuList li .val { opacity: .8; font-weight: 400; max-width: 55%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#menuList li.sel { background: rgba(255,255,255,.14); }
-#menuList li.sel .val::before { content: "◀  "; opacity: .5; }
-#menuList li.sel .val::after  { content: "  ▶"; opacity: .5; }
+/* Focused row: solid white with dark text, like tvOS */
+#menuCats li.sel { background: #fff; color: #111; font-weight: 600; transform: scale(1.03); }
+#menu.in-items #menuCats li.sel { background: rgba(255,255,255,.14); color: #fff; transform: none; }
+#menuList li.sel { background: #fff; color: #111; transform: scale(1.02); }
+#menuList li .val { opacity: .7; font-weight: 500; max-width: 55%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#menuList li.sel .val { opacity: .85; }
+#menuList li.sel .val::before { content: "‹  "; opacity: .5; }
+#menuList li.sel .val::after  { content: "  ›"; opacity: .5; }
 #menuList li.sel.text .val::before, #menuList li.sel.text .val::after,
 #menuList li.sel.action .val::before, #menuList li.sel.action .val::after { content: ""; }
+#menuList li.action span:first-child { font-weight: 500; }
 
 #textInput {
   position: fixed; left: 50%; top: 40%;
@@ -333,8 +335,7 @@ body.motion-reduced .slide img { animation: none !important; transform: none !im
 .card-bg {
   position: absolute; inset: -6%;
   background-size: cover; background-position: center;
-  filter: blur(60px) saturate(1.3) brightness(.55);
-  animation: drift 60s ease-in-out infinite alternate;
+  filter: blur(40px) saturate(1.3) brightness(.55);
 }
 .card-bg.sharp { inset: 0; filter: brightness(.6); }
 .card-bg.sharp::after {

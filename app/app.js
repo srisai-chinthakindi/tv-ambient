@@ -129,6 +129,20 @@
     rafId = requestAnimationFrame(frame);
   }
 
+  // Overlays (settings, dock, picker, calibration) pause the wallpaper so the
+  // TV's processor is free for the menu; the last frame stays on screen.
+  let overlays = 0;
+  function pauseForOverlay(on) {
+    overlays = Math.max(0, overlays + (on ? 1 : -1));
+    if (overlays > 0) {
+      cancelAnimationFrame(rafId); rafId = 0;
+      clearTimeout(rotateTimer);
+    } else {
+      if (current && current.kind === 'scene' && sceneState && !rafId && S.motion !== 'still') { lastFrame = 0; rafId = requestAnimationFrame(frame); }
+      scheduleRotate();
+    }
+  }
+
   function stopScene() {
     cancelAnimationFrame(rafId);
     rafId = 0;
@@ -198,7 +212,7 @@
       natureTitles = shuffle((data.query.categorymembers || []).map((m) => m.title));
       natureTopicLoaded = S.natureTopic;
     }
-    const width = S.quality === 'high' ? 3840 : 2560;
+    const width = S.quality === 'high' ? 3840 : 1920;
     for (let tries = 0; tries < 10 && natureTitles.length; tries++) {
       const title = natureTitles.pop();
       try {
@@ -332,7 +346,7 @@
 
   async function dailyItem(day) {
     if (day in dailyCache) return dailyCache[day];
-    const width = S.quality === 'high' ? 3840 : 2560;
+    const width = S.quality === 'high' ? 3840 : 1920;
     const data = await getJSON(COMMONS + '&generator=images&prop=imageinfo&iiprop=url|size|extmetadata&iiextmetadatafilter=Artist|LicenseShortName&iiurlwidth=' + width + '&titles=' + encodeURIComponent('Template:Potd/' + day));
     const pages = data.query ? Object.values(data.query.pages) : [];
     const pg = pages.find((p) => p.imageinfo && p.imageinfo[0].width >= p.imageinfo[0].height * 1.2);
@@ -383,6 +397,7 @@
     closeMenu();
     picking = true; pickSel = 0;
     picker.classList.add('show');
+    pauseForOverlay(true);
     pickerList.innerHTML = '<div class="pick-loading">Loading wallpapers…</div>';
     const items = SCENES.map((sc) => ({ item: { kind: 'scene', id: sc.id, name: sc.name }, thumb: sceneThumb(sc), label: sc.name, tag: 'Live' }));
     for (let i = 0; i < 8; i++) {
@@ -413,6 +428,7 @@
   }
 
   function closePicker() {
+    if (picking) pauseForOverlay(false);
     picking = false;
     picker.classList.remove('show');
   }
@@ -616,7 +632,9 @@
       }
       img.src = item.url;
       next.classList.add('show');
-      slides[activeSlide].classList.remove('show');
+      const old = slides[activeSlide];
+      old.classList.remove('show');
+      setTimeout(() => { if (!old.classList.contains('show')) old.querySelector('img').removeAttribute('src'); }, 2500);
       activeSlide = 1 - activeSlide;
       setCaption(item.title || '', item.by, item.credit);
       if (!cin && item.kind === 'art' && S.artMat === 'light') caption.classList.add('on-light');
@@ -755,6 +773,7 @@
 
   function scheduleRotate() {
     clearTimeout(rotateTimer);
+    if (typeof overlays !== 'undefined' && overlays > 0) return;
     if (paused) return;
     document.body.classList.toggle('fast', S.interval < 1);
     if (S.mode === 'pinned') return;
@@ -775,6 +794,7 @@
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const pad = (n) => (n < 10 ? '0' : '') + n;
 
+  let lastClock = '';
   function tick() {
     const d = new Date();
     let hr = d.getHours();
@@ -787,7 +807,7 @@
       html = (S.clockStyle === 'stacked' ? pad(hr) + '<br>' : hr + ':') + pad(d.getMinutes()) + '<span class="ampm">' + ampm + '</span>';
     }
     if (S.seconds) html += '<span class="sec">' + pad(d.getSeconds()) + '</span>';
-    $('clock').innerHTML = html;
+    if (html !== lastClock) { $('clock').innerHTML = html; lastClock = html; }
     $('date').textContent = DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
     applyDim();
   }
@@ -942,8 +962,23 @@
     { key: 'quality', label: 'Image quality', options: [['standard', 'Standard (faster)'], ['high', 'High (4K, slower)']] },
     { label: 'Reset all settings', type: 'action', run: () => { S = Object.assign({}, DEFAULTS); saveSettings(); applyAll(); restartShow(); renderMenu(); toast('Settings reset'); } }
   ];
-  const selectable = MENU.filter((m) => m.type !== 'section');
-  let menuSel = 0, editing = null;
+  // Settings are shown like tvOS Settings: categories on the left, that
+  // category's options on the right. Rows are built once per category and
+  // only the changed row is updated afterwards, so moving through the menu
+  // stays instant on TV hardware.
+  const CATEGORIES = [];
+  MENU.forEach((m) => {
+    if (m.type === 'section') CATEGORIES.push({ label: m.label, items: [] });
+    else CATEGORIES[CATEGORIES.length - 1].items.push(m);
+  });
+  const menuCats = $('menuCats');
+  let catSel = 0, itemSel = 0, menuFocus = 'cats', editing = null, itemRows = [];
+
+  CATEGORIES.forEach((c) => {
+    const li = document.createElement('li');
+    li.textContent = c.label;
+    menuCats.appendChild(li);
+  });
 
   function valueLabel(item) {
     if (item.type === 'text') return S[item.key] ? (item.key === 'tmdbKey' ? 'Saved' : S[item.key]) : 'Not set';
@@ -952,46 +987,65 @@
     return opt ? opt[1] : String(S[item.key]);
   }
 
-  function renderMenu() {
-    menuList.innerHTML = '';
-    let selEl = null;
-    MENU.forEach((item) => {
+  function buildItems() {
+    menuList.textContent = '';
+    itemRows = CATEGORIES[catSel].items.map((item) => {
       const li = document.createElement('li');
-      if (item.type === 'section') {
-        li.className = 'section';
-        li.textContent = item.label;
-      } else {
-        const name = document.createElement('span');
-        name.textContent = item.label;
-        const val = document.createElement('span');
-        val.className = 'val';
-        val.textContent = valueLabel(item);
-        li.appendChild(name); li.appendChild(val);
-        if (item.type) li.classList.add(item.type);
-        if (selectable[menuSel] === item) { li.classList.add('sel'); selEl = li; }
-      }
+      if (item.type) li.className = item.type;
+      const name = document.createElement('span');
+      name.textContent = item.label;
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = valueLabel(item);
+      li.appendChild(name); li.appendChild(val);
       menuList.appendChild(li);
+      return { li, val, item };
     });
-    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
   }
 
-  function openMenu() { menu.classList.remove('hidden'); renderMenu(); }
-  function closeMenu() { menu.classList.add('hidden'); }
-  const menuOpen = () => !menu.classList.contains('hidden');
+  function paintSelection() {
+    [...menuCats.children].forEach((li, i) => li.classList.toggle('sel', i === catSel));
+    menu.classList.toggle('in-items', menuFocus === 'items');
+    itemRows.forEach((r, i) => r.li.classList.toggle('sel', menuFocus === 'items' && i === itemSel));
+    const row = itemRows[itemSel];
+    if (menuFocus === 'items' && row) row.li.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Refresh every visible value (used after resets or logins); cheap: one category only.
+  function renderMenu() {
+    itemRows.forEach((r) => { r.val.textContent = valueLabel(r.item); });
+    paintSelection();
+  }
+
+  function openMenu() {
+    menuFocus = 'cats';
+    buildItems();
+    paintSelection();
+    menu.classList.add('open');
+    pauseForOverlay(true);
+  }
+  function closeMenu() {
+    if (!menu.classList.contains('open')) return;
+    menu.classList.remove('open');
+    pauseForOverlay(false);
+  }
+  const menuOpen = () => menu.classList.contains('open');
 
   function change(dir) {
-    const item = selectable[menuSel];
-    if (!item.options) return;
+    const row = itemRows[itemSel];
+    const item = row && row.item;
+    if (!item || !item.options) return;
     let i = item.options.findIndex((o) => o[0] === S[item.key]);
     i = (i + dir + item.options.length) % item.options.length;
     S[item.key] = item.options[i][0];
+    row.val.textContent = item.options[i][1];
     saveSettings();
     applySetting(item);
-    renderMenu();
   }
 
   function activate() {
-    const item = selectable[menuSel];
+    const item = itemRows[itemSel] && itemRows[itemSel].item;
+    if (!item) return;
     if (item.type === 'action') { item.run(); return; }
     if (item.type === 'text') {
       editing = item;
@@ -1017,18 +1071,38 @@
     renderMenu();
   }
 
+  function menuKey(k) {
+    if (menuFocus === 'cats') {
+      if (k === K.UP || k === K.DOWN) {
+        catSel = (catSel + (k === K.UP ? -1 : 1) + CATEGORIES.length) % CATEGORIES.length;
+        itemSel = 0; buildItems();
+      } else if (k === K.RIGHT || k === K.ENTER) { menuFocus = 'items'; itemSel = 0; }
+      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE || k === K.LEFT) { closeMenu(); return; }
+    } else {
+      const item = itemRows[itemSel] && itemRows[itemSel].item;
+      if (k === K.UP) itemSel = Math.max(0, itemSel - 1);
+      else if (k === K.DOWN) itemSel = Math.min(itemRows.length - 1, itemSel + 1);
+      else if (k === K.RIGHT) { change(1); return; }
+      else if (k === K.LEFT) { if (item && item.options) { change(-1); return; } menuFocus = 'cats'; }
+      else if (k === K.ENTER) { activate(); return; }
+      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) menuFocus = 'cats';
+    }
+    paintSelection();
+  }
+
   function applySetting(item) {
     if (['city', 'units', 'weather'].indexOf(item.key) >= 0) updateWeather();
     if (/^auto|^launcher$/.test(item.key)) sendAutoConfig();
     if (item.key === 'miniPlayer') pollPlayer();
     if (item.key === 'caption' && current) render(current);
     if (item.key === 'artMat' && current && current.kind === 'art') render(current);
-    if (item.key === 'interval') scheduleRotate();
+    if (item.key === 'interval' && !menuOpen()) scheduleRotate();
     if (['videos', 'wallList'].indexOf(item.key) >= 0) { wallFileAt = 0; if (S.mode === 'walls') restartShow(); }
     if (item.key === 'tmdbKey') { shows = null; if (S.tmdbKey) { S.mixNetflix = true; saveSettings(); } restartShow(); }
-    if (item.restart) restartShow();
+    if (item.restart) { clearTimeout(restartTimer); restartTimer = setTimeout(restartShow, 700); }
     applyHud(); applyLook(); tick();
   }
+  let restartTimer = 0;
 
   function applyAll() { applyHud(); applyLook(); tick(); updateWeather(); }
 
@@ -1083,9 +1157,11 @@
     view = 'dock'; dockSel = 0;
     renderDock();
     dock.classList.add('show');
+    pauseForOverlay(true);
   }
 
   function closeDock() {
+    if (view) pauseForOverlay(false);
     view = null;
     dock.classList.remove('show');
     grid.classList.remove('show');
@@ -1330,6 +1406,7 @@
   function openCalib() {
     closeMenu();
     calibOpen = true; calibIndex = 0;
+    pauseForOverlay(true);
     calib.classList.add('show');
     calibText.classList.remove('hidden');
     showCalib();
@@ -1341,6 +1418,7 @@
     else if (k === K.ENTER) calibText.classList.toggle('hidden');
     else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) {
       calibOpen = false; cancelAnimationFrame(calibRaf); calib.classList.remove('show');
+      pauseForOverlay(false);
     }
   }
 
@@ -1375,16 +1453,7 @@
     if (picking) { e.preventDefault(); pickerKey(k); return; }
     if (view) { e.preventDefault(); dockKey(k); return; }
 
-    if (menuOpen()) {
-      e.preventDefault();
-      if (k === K.UP) { menuSel = (menuSel - 1 + selectable.length) % selectable.length; renderMenu(); }
-      else if (k === K.DOWN) { menuSel = (menuSel + 1) % selectable.length; renderMenu(); }
-      else if (k === K.LEFT) change(-1);
-      else if (k === K.RIGHT) change(1);
-      else if (k === K.ENTER) activate();
-      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) closeMenu();
-      return;
-    }
+    if (menuOpen()) { e.preventDefault(); menuKey(k); return; }
 
     switch (k) {
       case K.ENTER: e.preventDefault(); openMenu(); break;
