@@ -191,7 +191,11 @@ function loadInstalled() {
     tizen.application.getAppsInfo(function (infos) {
       installed = [];
       for (var i = 0; i < infos.length; i++) {
-        if (infos[i].show && infos[i].id.indexOf(ownPkg) !== 0) installed.push(infos[i].id);
+        // The TV leaves the "show" flag unset, so filter by ID instead: store apps
+        // (Netflix 3201907018807, YouTube 111299001912...) and sideloaded apps, not
+        // Samsung's own system services.
+        var id = infos[i].id;
+        if (id.indexOf(ownPkg) !== 0 && !/^(org\.tizen|com\.samsung|org\.volt)/.test(id)) installed.push(id);
       }
     }, function (e) { watch.lastError = 'appsinfo: ' + (e && e.message); });
   } catch (e) { watch.lastError = 'appsinfo: ' + e.message; }
@@ -286,7 +290,8 @@ function spotifyResult(res, state) {
 /* ---- Read-only status on the home network, for testing from a computer ---- */
 
 var statusServer = http.createServer(function (req, res) {
-  send(res, 200, JSON.stringify({ auto: auto, watch: watch, ownPkg: ownPkg, aliveAt: aliveAt, now: Date.now() }));
+  send(res, 200, JSON.stringify({ auto: auto, watch: watch, ownPkg: ownPkg, aliveAt: aliveAt, now: Date.now(),
+    installed: installed, runningIds: runningIds, lastSweep: lastSweep }));
 });
 statusServer.on('error', function (e) {
   if (e.code !== 'EADDRINUSE') throw e;
