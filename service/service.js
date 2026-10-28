@@ -108,6 +108,9 @@ var watch = { running: [], visible: [], idleSince: 0, lastLaunch: 0, lastError: 
 // The app that was on screen when Ambient opened by itself (e.g. Spotify), so any
 // button press can send the viewer straight back to it. Empty means Samsung's home.
 var session = { autoAt: 0, prevApp: '' };
+// Samsung never reports Ambient itself as on screen, so the app sends a heartbeat
+// (/alive) every 2 s while it is visible.
+var aliveAt = 0;
 var ownPkg = 'xvvl3S1bvH';
 try { ownPkg = tizen.application.getAppInfo().packageId || ownPkg; } catch (e) { /* keep the default */ }
 
@@ -154,7 +157,7 @@ function openAmbient() {
 function evaluate(ids, visible) {
   watch.running = ids;
   watch.visible = visible;
-  var mine = false, others = [];
+  var mine = Date.now() - aliveAt < 5000, others = [];
   for (var i = 0; i < visible.length; i++) {
     if (visible[i].indexOf(ownPkg) === 0) mine = true;
     else others.push(visible[i]);
@@ -249,7 +252,7 @@ function spotifyResult(res, state) {
 /* ---- Read-only status on the home network, for testing from a computer ---- */
 
 var statusServer = http.createServer(function (req, res) {
-  send(res, 200, JSON.stringify({ auto: auto, watch: watch, ownPkg: ownPkg, now: Date.now() }));
+  send(res, 200, JSON.stringify({ auto: auto, watch: watch, ownPkg: ownPkg, aliveAt: aliveAt, now: Date.now() }));
 });
 statusServer.on('error', function (e) {
   if (e.code !== 'EADDRINUSE') throw e;
@@ -263,6 +266,7 @@ var server = http.createServer(function (req, res) {
   if (parsed.pathname === '/launch') return launchApp(res, String(parsed.query.id || ''));
   if (parsed.pathname === '/config') return setConfig(res, parsed.query.json);
   if (parsed.pathname === '/session') return sendSession(res);
+  if (parsed.pathname === '/alive') { aliveAt = Date.now(); return send(res, 200, '{}'); }
   if (parsed.pathname === '/open') return openBrowser(res, String(parsed.query.url || ''));
   if (parsed.pathname === '/callback') return spotifyCallback(res, parsed.query);
   if (parsed.pathname === '/spotify/result') return spotifyResult(res, String(parsed.query.state || ''));

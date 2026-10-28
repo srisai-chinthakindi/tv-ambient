@@ -1542,6 +1542,8 @@
   pollPlayer();
   setInterval(pollPlayer, 4000);
   setInterval(checkSleep, 30000);
+  // Tell the helper Ambient is on screen (Samsung doesn't report it), so it doesn't reopen it.
+  setInterval(() => { if (!document.hidden) fetch(SERVICE + '/alive').catch(() => {}); }, 2000);
   checkSession();
   setInterval(tick, 1000);
   setInterval(pixelShift, 60 * 1000);
