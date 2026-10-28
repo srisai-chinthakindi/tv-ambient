@@ -19,7 +19,7 @@ jobs:
 
       - name: Read version
         id: version
-        run: echo "version=$(grep -oP '(?<= version=")[0-9.]+' tizen/config.xml | head -1)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(grep -oP '(?<=/tv" version=")[0-9.]+' tizen/config.xml | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Build Ambient.wgt
         run: python3 tools/build_wgt.py Ambient.wgt
