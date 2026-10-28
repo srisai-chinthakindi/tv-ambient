@@ -932,6 +932,7 @@
     { label: 'Connect Spotify', type: 'action', run: () => { closeMenu(); connectSpotify(); } },
     { label: 'Disconnect Spotify', type: 'action', run: () => { S.spotifyRefresh = ''; spAccess = ''; saveSettings(); pollPlayer(); toast('Spotify disconnected'); } },
     { type: 'section', label: 'Display' },
+    { label: 'Picture calibration patterns', type: 'action', run: () => openCalib() },
     { key: 'sleepAfter', label: 'Turn screen off after', options: [[0, 'Never'], [30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']] },
     { key: 'tone', label: 'Colour tone', options: [['neutral', 'Neutral'], ['warm', 'Warm'], ['cool', 'Cool']] },
     { key: 'motion', label: 'Motion', options: [['full', 'Full'], ['reduced', 'Reduced (no zoom)'], ['still', 'Still (no animation)']], restart: true },
@@ -1203,6 +1204,145 @@
     document.body.classList.toggle('motion-still', S.motion === 'still');
   }
 
+  /* ------------------------ Picture calibration --------------------------- */
+
+  // Test patterns for tuning the TV's own picture settings by eye. Open from
+  // settings ("Picture calibration"), ◀ ▶ switch patterns, Back exits.
+  const calib = $('calib'), calibCanvas = $('calibCanvas'), calibText = $('calibText');
+  const cctx = calibCanvas.getContext('2d');
+  let calibIndex = 0, calibOpen = false, calibRaf = 0;
+
+  function label(g, text, x, y, size, color) {
+    g.fillStyle = color || '#888';
+    g.font = (size || 22) + 'px "Outfit", sans-serif';
+    g.textAlign = 'center';
+    g.fillText(text, x, y);
+  }
+
+  const PATTERNS = [
+    {
+      name: 'Black level',
+      tip: 'Setting: Brightness and Shadow Detail. Adjust until bar 4 is just barely visible and bar 0 is pure black, the same as the background.',
+      draw(g, w, h) {
+        g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+        const levels = [0, 2, 4, 6, 8, 12, 16, 24];
+        const bw = w / 12;
+        levels.forEach((v, i) => {
+          const x = w * 0.17 + i * bw * 1.05;
+          g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+          g.fillRect(x, h * 0.25, bw, h * 0.45);
+          label(g, String(v), x + bw / 2, h * 0.76, 24, '#555');
+        });
+      }
+    },
+    {
+      name: 'White level',
+      tip: 'Setting: Contrast. Raise it until the bars start to merge, then lower it until you can tell 245, 250 and 255 apart.',
+      draw(g, w, h) {
+        g.fillStyle = 'rgb(200,200,200)'; g.fillRect(0, 0, w, h);
+        const levels = [230, 235, 240, 245, 250, 255];
+        const bw = w / 9;
+        levels.forEach((v, i) => {
+          const x = w * 0.16 + i * bw * 1.05;
+          g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+          g.fillRect(x, h * 0.25, bw, h * 0.45);
+          label(g, String(v), x + bw / 2, h * 0.76, 24, '#555');
+        });
+      }
+    },
+    {
+      name: 'Sharpness',
+      tip: 'Setting: Sharpness. Lower it until the thin lines and letters have no bright or dark outlines (halos). Usually 0 to 4 on Samsung.',
+      draw(g, w, h) {
+        g.fillStyle = 'rgb(128,128,128)'; g.fillRect(0, 0, w, h);
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = i % 2 ? '#000' : '#fff';
+          g.fillRect(w * 0.1 + i * 2, h * 0.2, 1, h * 0.25);
+          g.fillRect(w * 0.1, h * 0.55 + i * 2, w * 0.2, 1);
+        }
+        g.strokeStyle = '#000'; g.lineWidth = 3;
+        for (let r = 30; r < 200; r += 30) { g.beginPath(); g.arc(w * 0.62, h * 0.42, r, 0, Math.PI * 2); g.stroke(); }
+        label(g, 'Thin text should look clean, with no glow around it', w * 0.62, h * 0.8, 26, '#000');
+        label(g, 'Thin text should look clean, with no glow around it', w * 0.62, h * 0.86, 16, '#000');
+      }
+    },
+    {
+      name: 'Colour',
+      tip: 'Settings: Colour and Colour Tone. Colours should look rich but not glowing. Skin should look natural. Colour 25 and Warm1 or Warm2 is usually right.',
+      draw(g, w, h) {
+        const bars = ['#bfbfbf', '#bfbf00', '#00bfbf', '#00bf00', '#bf00bf', '#bf0000', '#0000bf'];
+        bars.forEach((c, i) => { g.fillStyle = c; g.fillRect(i * w / 7, 0, w / 7 + 1, h * 0.62); });
+        const skins = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#5c3a1e'];
+        skins.forEach((c, i) => { g.fillStyle = c; g.fillRect(i * w / 5, h * 0.62, w / 5 + 1, h * 0.38); });
+      }
+    },
+    {
+      name: 'Smooth gradients',
+      tip: 'Setting: Noise Reduction / Contrast Enhancer. The ramps should be smooth. If you see stripes (banding), lower Contrast Enhancer and keep Noise Reduction Low.',
+      draw(g, w, h) {
+        const ramps = [[1, 1, 1], [1, 0, 0], [0, 1, 0], [0, 0, 1]];
+        ramps.forEach((m, i) => {
+          const gr = g.createLinearGradient(0, 0, w, 0);
+          gr.addColorStop(0, '#000');
+          gr.addColorStop(1, 'rgb(' + m.map((x) => x * 255).join(',') + ')');
+          g.fillStyle = gr;
+          g.fillRect(0, i * h / 4, w, h / 4 + 1);
+        });
+      }
+    },
+    {
+      name: 'Motion (sports)',
+      tip: 'Setting: Picture Clarity. Watch the moving text and ball. Raise Blur Reduction until the text stays readable; add Judder Reduction only until movement is smooth without a "soap opera" look.',
+      motion: true,
+      draw(g, w, h, t) {
+        g.fillStyle = '#1b4d2b'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 4;
+        g.strokeRect(w * 0.05, h * 0.1, w * 0.9, h * 0.8);
+        g.beginPath(); g.moveTo(w / 2, h * 0.1); g.lineTo(w / 2, h * 0.9); g.stroke();
+        const x = (t * w * 0.5) % (w + 400) - 200;
+        g.fillStyle = '#fff';
+        g.font = '600 64px "Outfit", sans-serif'; g.textAlign = 'left';
+        g.fillText('MOTION CLARITY 1234', x, h * 0.3);
+        const bx = w / 2 + Math.sin(t * 2.2) * w * 0.4, by = h * 0.6 + Math.abs(Math.sin(t * 3.1)) * -h * 0.2;
+        g.beginPath(); g.arc(bx, by, 22, 0, Math.PI * 2); g.fill();
+      }
+    }
+  ];
+
+  function drawCalib(now) {
+    const p = PATTERNS[calibIndex];
+    const w = calibCanvas.width, h = calibCanvas.height;
+    p.draw(cctx, w, h, (now || 0) / 1000);
+    if (p.motion && calibOpen) calibRaf = requestAnimationFrame(drawCalib);
+  }
+
+  function showCalib() {
+    cancelAnimationFrame(calibRaf);
+    calibCanvas.width = Math.min(window.innerWidth, 1920);
+    calibCanvas.height = Math.round(calibCanvas.width * window.innerHeight / window.innerWidth);
+    const p = PATTERNS[calibIndex];
+    calibText.innerHTML = '<b>' + (calibIndex + 1) + '/' + PATTERNS.length + '  ' + esc(p.name) + '</b>' + esc(p.tip) +
+      '<span>◀ ▶ next pattern · OK hide/show this text · Back exit</span>';
+    drawCalib(performance.now());
+  }
+
+  function openCalib() {
+    closeMenu();
+    calibOpen = true; calibIndex = 0;
+    calib.classList.add('show');
+    calibText.classList.remove('hidden');
+    showCalib();
+  }
+
+  function calibKey(k) {
+    if (k === K.LEFT) { calibIndex = (calibIndex - 1 + PATTERNS.length) % PATTERNS.length; showCalib(); }
+    else if (k === K.RIGHT) { calibIndex = (calibIndex + 1) % PATTERNS.length; showCalib(); }
+    else if (k === K.ENTER) calibText.classList.toggle('hidden');
+    else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) {
+      calibOpen = false; cancelAnimationFrame(calibRaf); calib.classList.remove('show');
+    }
+  }
+
   /* ------------------------------ Remote -------------------------------- */
 
   const K = {
@@ -1229,6 +1369,7 @@
       return;
     }
 
+    if (calibOpen) { e.preventDefault(); calibKey(k); return; }
     if (playerFocus) { e.preventDefault(); playerKey(k); return; }
     if (picking) { e.preventDefault(); pickerKey(k); return; }
     if (view) { e.preventDefault(); dockKey(k); return; }
