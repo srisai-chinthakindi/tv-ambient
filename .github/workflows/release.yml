@@ -6,7 +6,7 @@ name: Release Ambient.wgt
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'service/**', 'tizen/**', 'tools/build_wgt.py']
+    paths: ['app/**', 'service/**', 'tizen/**', 'tools/build_wgt.py', '.github/workflows/release.yml']
 
 permissions:
   contents: write
