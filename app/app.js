@@ -27,7 +27,7 @@
     quality: 'standard',
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
-    pins: null, pinned: null,
+    pins: null, pinned: null, look: 'cinematic',
     autoOn: true, autoDelay: 5, autoOverSpotify: true,
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
     clockFont: 'modern', clockWeight: 'thin', clockColor: 'white', clockStyle: 'inline'
@@ -583,20 +583,22 @@
   function render(item) {
     current = item;
     caption.classList.remove('show', 'on-light');
-    document.body.classList.toggle('light', item.kind === 'art' && S.artMat === 'light');
+    const cin = S.look === 'cinematic';
+    document.body.classList.toggle('light', !cin && item.kind === 'art' && S.artMat === 'light');
     applyClockStyle();
-    document.body.classList.toggle('photo', ['nature', 'video', 'wallimg', 'card'].indexOf(item.kind) >= 0 || (item.kind === 'art' && S.artMat === 'none'));
+    document.body.classList.toggle('photo', cin || ['nature', 'video', 'wallimg', 'card'].indexOf(item.kind) >= 0 || (item.kind === 'art' && S.artMat === 'none'));
     if (item.kind === 'scene') {
       showLayer('scene');
       startScene(item.id);
-      setCaption(item.name, 'Ambient scene', '');
+      setCaption(item.name, cin ? '' : 'Ambient scene', '');
     } else if (item.kind === 'art' || item.kind === 'nature' || item.kind === 'wallimg') {
       showLayer('photo');
       const next = slides[1 - activeSlide];
-      next.className = 'slide ' + (item.kind === 'art' ? 'art mat-' + S.artMat : 'cover');
+      // Cinematic look: everything full-bleed; Gallery look: paintings on a mat.
+      next.className = 'slide ' + (item.kind === 'art' && !cin ? 'art mat-' + S.artMat : 'cover');
       const img = next.querySelector('img');
       img.style.width = img.style.height = '';
-      if (item.kind === 'art') {
+      if (item.kind === 'art' && !cin) {
         // Scale the artwork to fill the mat, whatever its source resolution.
         img.onload = () => {
           const pad = S.artMat === 'none' ? 0 : 1;
@@ -613,7 +615,7 @@
       slides[activeSlide].classList.remove('show');
       activeSlide = 1 - activeSlide;
       setCaption(item.title || '', item.by, item.credit);
-      if (item.kind === 'art' && S.artMat === 'light') caption.classList.add('on-light');
+      if (!cin && item.kind === 'art' && S.artMat === 'light') caption.classList.add('on-light');
     } else if (item.kind === 'card') {
       showLayer('card');
       card.innerHTML = '<div class="card-bg' + (item.sharp ? ' sharp' : '') + '"></div><div class="card-body">' + item.html + '</div>';
@@ -631,6 +633,12 @@
   function setCaption(title, by, credit) {
     if (!S.caption || !title) { caption.innerHTML = ''; return; }
     caption.innerHTML = '';
+    if (S.look === 'cinematic' && current) {
+      const kicker = document.createElement('span');
+      kicker.className = 'kicker';
+      kicker.textContent = { scene: 'Live wallpaper', art: 'Painting', nature: current.credit && /day/.test(current.credit) ? 'Picture of the day' : 'Nature' }[current.kind] || 'Ambient';
+      caption.appendChild(kicker);
+    }
     const b = document.createElement('b');
     b.textContent = title.length > 90 ? title.slice(0, 87) + '…' : title;
     caption.appendChild(b);
@@ -754,6 +762,7 @@
     $('weather').classList.toggle('hidden', !S.weather);
     hud.classList.toggle('hidden', !S.clock && !S.date && !S.weather && player.classList.contains('hidden'));
     applyClockStyle();
+    document.body.classList.toggle('cinematic', S.look === 'cinematic');
   }
 
   // Nudge the overlay a few pixels every minute so nothing sits in one spot for hours.
@@ -824,6 +833,18 @@
 
   const onOff = [[true, 'On'], [false, 'Off']];
   const MENU = [
+    { type: 'section', label: 'Look' },
+    { label: 'Apply Apple TV style (recommended)', type: 'action', run: () => {
+      Object.assign(S, {
+        look: 'cinematic', mode: 'mix', interval: 0.25,
+        mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: false, mixNetflix: false,
+        clock: true, clock24: false, seconds: false, date: true, weather: true, caption: true,
+        clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline',
+        quality: 'standard', miniPlayer: true
+      });
+      saveSettings(); applyAll(); restartShow(); renderMenu(); toast('Apple TV style applied');
+    } },
+    { key: 'look', label: 'Style', options: [['cinematic', 'Cinematic (Netflix / Apple TV)'], ['gallery', 'Gallery (art on a mat)']], restart: true },
     { type: 'section', label: 'What to show' },
     { key: 'mode', label: 'Show', options: [['mix', 'Mix (choose below)'], ['anime', 'Anime scenes'], ['art', 'Paintings'], ['nature', 'Nature photos'], ['daily', 'Daily pictures'], ['walls', 'My wallpapers'], ['pinned', 'My chosen wallpaper'], ['songs', 'Trending songs'], ['netflix', 'Popular on Netflix']], restart: true },
     { label: 'Choose a wallpaper…', type: 'action', run: () => openPicker() },

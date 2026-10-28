@@ -231,6 +231,43 @@ body.fast .slide { transition: opacity .8s ease; }
 #player.focus .pl-ctl { opacity: 1; }
 #player.focus .pl-ctl .pp { color: #1ed760; }
 
+/* ---------- Cinematic look (Netflix / Apple TV idle screen) ---------- */
+body.cinematic .slide { transition: opacity 1.6s ease; }
+body.cinematic .slide.cover img { animation: cine 22s ease-out both; }
+@keyframes cine {
+  from { transform: scale(1.12) translate(1.5%, 1%); }
+  to   { transform: scale(1.0) translate(0, 0); }
+}
+body.cinematic #shade {
+  height: 100vh; opacity: 1;
+  background:
+    linear-gradient(to top, rgba(0,0,0,.78) 0%, rgba(0,0,0,.25) 38%, rgba(0,0,0,0) 60%),
+    linear-gradient(to right, rgba(0,0,0,.45) 0%, rgba(0,0,0,0) 45%),
+    linear-gradient(to bottom, rgba(0,0,0,.35) 0%, rgba(0,0,0,0) 22%);
+}
+body.cinematic #caption {
+  left: 5.5vw; bottom: 9vh; max-width: 52vw;
+  font-size: 2vh; color: rgba(255,255,255,.78);
+}
+body.cinematic #caption .kicker {
+  display: block; font-size: 1.5vh; letter-spacing: .32em; text-transform: uppercase;
+  opacity: .75; margin-bottom: 1.6vh; font-weight: 400;
+}
+body.cinematic #caption b {
+  font-size: 6.2vh; font-weight: 600; line-height: 1.05; letter-spacing: -.01em;
+  color: #fff; margin-bottom: 1.4vh;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Small, quiet clock in the top-right corner */
+body.cinematic #hud {
+  top: 6vh !important; right: 5vw !important; bottom: auto !important; left: auto !important;
+  margin: 0 !important; width: auto !important; text-align: right !important;
+}
+body.cinematic #hud #clock { font-size: 7vh; }
+body.cinematic #hud #date { font-size: 1.6vh; margin-top: 1vh; }
+body.cinematic #hud #weather { font-size: 1.8vh; justify-content: flex-end; }
+body.cinematic #player { margin-left: auto; }
+
 /* ---------- Settings menu ---------- */
 #menu {
   position: fixed; top: 0; right: 0; bottom: 0;
