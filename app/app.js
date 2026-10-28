@@ -16,11 +16,12 @@
 
   const DEFAULTS = {
     mode: 'mix',
-    mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: true, mixNetflix: false,
+    mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: false, mixNetflix: false,
     scene: 'auto',
     artStyle: 'japanese', artMat: 'light', caption: true,
     natureTopic: 'landscapes',
-    interval: 0.05,
+    // Best-experience defaults (Apple TV style): calm 15 s changes; 3 s is available in settings.
+    interval: 0.25,
     clock: true, clock24: false, seconds: false, clockSize: 'm', clockPos: 'br', date: true,
     weather: true, city: 'Hyderabad', units: 'c',
     brightness: 100, nightDim: '23-7',
@@ -28,10 +29,10 @@
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
     pins: null, pinned: null, look: 'cinematic',
-    autoOn: true, autoDelay: 10, autoOverSpotify: true, launcher: false,
-    sleepAfter: 0, tone: 'neutral', motion: 'full',
+    autoOn: true, autoDelay: 10, autoOverSpotify: true, launcher: true,
+    sleepAfter: 240, tone: 'neutral', motion: 'full',
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
-    clockFont: 'modern', clockWeight: 'thin', clockColor: 'white', clockStyle: 'inline'
+    clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline'
   };
   const STORE_KEY = 'ambient.settings.v1';
 
