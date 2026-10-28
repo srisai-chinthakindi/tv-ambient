@@ -28,7 +28,8 @@
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
     pins: null, pinned: null, look: 'cinematic',
-    autoOn: true, autoDelay: 5, autoOverSpotify: true,
+    autoOn: true, autoDelay: 10, autoOverSpotify: true,
+    sleepAfter: 0, tone: 'neutral', motion: 'full',
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
     clockFont: 'modern', clockWeight: 'thin', clockColor: 'white', clockStyle: 'inline'
   };
@@ -144,6 +145,8 @@
     const z = 1.02 + Math.sin(t / 40) * 0.02;
     ctx.drawImage(sceneState.bg, -(z - 1) * w / 2, -(z - 1) * h / 2, w * z, h * z);
     scene.draw(ctx, sceneState, w, h, t, dt);
+    // Motion: Still — draw one frame and stop.
+    if (S.motion === 'still') { cancelAnimationFrame(rafId); rafId = 0; }
   }
 
   let autoSceneIndex = Math.floor(Math.random() * SCENES.length);
@@ -919,7 +922,7 @@
     { key: 'units', label: 'Units', options: [['c', '°C'], ['f', '°F']] },
     { type: 'section', label: 'Auto-start' },
     { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
-    { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
+    { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [10, '10 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
     { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
     { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
     { type: 'section', label: 'Spotify mini player' },
@@ -928,6 +931,9 @@
     { label: 'Connect Spotify', type: 'action', run: () => { closeMenu(); connectSpotify(); } },
     { label: 'Disconnect Spotify', type: 'action', run: () => { S.spotifyRefresh = ''; spAccess = ''; saveSettings(); pollPlayer(); toast('Spotify disconnected'); } },
     { type: 'section', label: 'Display' },
+    { key: 'sleepAfter', label: 'Turn screen off after', options: [[0, 'Never'], [30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']] },
+    { key: 'tone', label: 'Colour tone', options: [['neutral', 'Neutral'], ['warm', 'Warm'], ['cool', 'Cool']] },
+    { key: 'motion', label: 'Motion', options: [['full', 'Full'], ['reduced', 'Reduced (no zoom)'], ['still', 'Still (no animation)']], restart: true },
     { key: 'brightness', label: 'Brightness', options: [[100, '100%'], [90, '90%'], [80, '80%'], [70, '70%'], [60, '60%'], [50, '50%'], [40, '40%']] },
     { key: 'nightDim', label: 'Night dimming', options: [['off', 'Off'], ['22-6', '10 PM – 6 AM'], ['23-7', '11 PM – 7 AM'], ['0-6', '12 AM – 6 AM']] },
     { key: 'quality', label: 'Image quality', options: [['standard', 'Standard (faster)'], ['high', 'High (4K, slower)']] },
@@ -1018,10 +1024,10 @@
     if (['videos', 'wallList'].indexOf(item.key) >= 0) { wallFileAt = 0; if (S.mode === 'walls') restartShow(); }
     if (item.key === 'tmdbKey') { shows = null; if (S.tmdbKey) { S.mixNetflix = true; saveSettings(); } restartShow(); }
     if (item.restart) restartShow();
-    applyHud(); tick();
+    applyHud(); applyLook(); tick();
   }
 
-  function applyAll() { applyHud(); tick(); updateWeather(); }
+  function applyAll() { applyHud(); applyLook(); tick(); updateWeather(); }
 
   /* ----------------------------- App dock -------------------------------- */
 
@@ -1120,6 +1126,79 @@
     }
   }
 
+  /* --------------------- Screensaver behaviour ---------------------------- */
+
+  // When the idle timer opened Ambient, it behaves like a TV screensaver: any
+  // button returns to where the viewer was (Samsung home, or Spotify with the
+  // music still playing). ▲ controls the music, and holding OK opens settings.
+  let screensaver = false, prevApp = '', okDownAt = 0;
+
+  async function checkSession() {
+    try {
+      const s = await getJSON(SERVICE + '/session');
+      if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
+    } catch (e) { /* helper not running: normal app behaviour */ }
+  }
+
+  function dismiss() {
+    screensaver = false;
+    closeDock(); closePicker(); closeMenu();
+    if (prevApp) {
+      fetch(SERVICE + '/launch?id=' + encodeURIComponent(prevApp)).catch(() => {});
+    } else {
+      try { tizen.application.getCurrentApplication().hide(); } catch (e) { toast('Press Back to leave Ambient'); }
+    }
+  }
+
+  function screensaverKey(e) {
+    const k = e.keyCode;
+    if (k === K.ENTER) { e.preventDefault(); if (!okDownAt) okDownAt = Date.now(); return true; }
+    if (k === K.UP && !player.classList.contains('hidden')) return false; // let ▲ reach the mini player
+    e.preventDefault();
+    dismiss();
+    return true;
+  }
+
+  document.addEventListener('keyup', (e) => {
+    if (e.keyCode !== K.ENTER || !okDownAt) return;
+    const held = Date.now() - okDownAt;
+    okDownAt = 0;
+    if (!screensaver) return;
+    if (held > 700) { screensaver = false; openMenu(); toast('Settings'); } else { dismiss(); }
+  });
+
+  /* ------------------ Premium ambient settings ---------------------------- */
+
+  // Turn the screen dark after a while with no button presses, like the
+  // "Sleep after" option on Samsung Frame / LG Gallery mode.
+  let lastInput = Date.now(), sleeping = false;
+  const sleepEl = $('sleep'), toneEl = $('tone');
+
+  function goToSleep() {
+    sleeping = true;
+    sleepEl.classList.add('on');
+    clearTimeout(rotateTimer);
+    stopScene();
+  }
+
+  function wake() {
+    if (!sleeping) return;
+    sleeping = false;
+    sleepEl.classList.remove('on');
+    if (current && current.kind === 'scene') startScene(current.id);
+    scheduleRotate();
+  }
+
+  function checkSleep() {
+    if (!sleeping && S.sleepAfter > 0 && Date.now() - lastInput > S.sleepAfter * 60000) goToSleep();
+  }
+
+  function applyLook() {
+    toneEl.className = 'tone-' + S.tone;
+    document.body.classList.toggle('motion-reduced', S.motion !== 'full');
+    document.body.classList.toggle('motion-still', S.motion === 'still');
+  }
+
   /* ------------------------------ Remote -------------------------------- */
 
   const K = {
@@ -1136,6 +1215,9 @@
 
   document.addEventListener('keydown', (e) => {
     const k = e.keyCode;
+    lastInput = Date.now();
+    if (sleeping) { e.preventDefault(); wake(); return; }
+    if (screensaver && !playerFocus && !menuOpen() && screensaverKey(e)) return;
 
     if (editing) {
       if (k === K.ENTER || k === K.IME_DONE) { e.preventDefault(); finishEdit(true); }
@@ -1234,7 +1316,7 @@
   window.addEventListener('resize', () => { if (current && current.kind === 'scene') startScene(current.id); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { stopScene(); }
-    else { keepAwake(); if (current && current.kind === 'scene') startScene(current.id); }
+    else { keepAwake(); checkSession(); if (current && current.kind === 'scene') startScene(current.id); }
   });
 
   registerKeys();
@@ -1244,6 +1326,8 @@
   sendAutoConfig();
   pollPlayer();
   setInterval(pollPlayer, 4000);
+  setInterval(checkSleep, 30000);
+  checkSession();
   setInterval(tick, 1000);
   setInterval(pixelShift, 60 * 1000);
   setInterval(updateWeather, 15 * 60 * 1000);

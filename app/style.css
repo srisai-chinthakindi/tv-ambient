@@ -268,6 +268,14 @@ body.cinematic #hud #date { font-size: 1.9vh; margin-top: 1.4vh; }
 body.cinematic #hud #weather { font-size: 2vh; justify-content: flex-start; }
 body.cinematic #player { margin-left: 0; }
 
+/* ---------- Colour tone, motion and sleep ---------- */
+#tone { position: fixed; inset: 0; pointer-events: none; }
+#tone.tone-warm { background: rgba(255,150,60,.08); }
+#tone.tone-cool { background: rgba(90,150,255,.08); }
+body.motion-reduced .slide img { animation: none !important; transform: none !important; }
+#sleep { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 3s; }
+#sleep.on { opacity: 1; }
+
 /* ---------- Settings menu ---------- */
 #menu {
   position: fixed; top: 0; right: 0; bottom: 0;

@@ -10,6 +10,7 @@
  *   GET http://127.0.0.1:8095/icon?id=...  ->  an app's icon image
  *   GET http://127.0.0.1:8095/launch?id=.. ->  opens that app
  *   GET http://127.0.0.1:8095/config?json= ->  auto-start settings from the app
+ *   GET http://127.0.0.1:8095/session      ->  {auto, prevApp}: opened by the idle timer, and from which app
  *   GET http://127.0.0.1:8095/open?url=    ->  opens Spotify's login page in the TV browser
  *   GET http://127.0.0.1:8095/callback     ->  Spotify login redirect (PKCE code)
  *   GET http://<tv>:8096/                  ->  read-only auto-start status, for testing
@@ -102,8 +103,11 @@ function launchApp(res, id) {
 var MODULE = { moduleName: 'srisai-chinthakindi/tv-ambient', moduleType: 'gh' };
 var STANDALONE_PKG = 'AmbientTV1'; // package id in tizen/config.xml
 var SPOTIFY_APP = '3201606009684';
-var auto = { on: true, delay: 5, overSpotify: true, pausedUntil: 0 };
+var auto = { on: true, delay: 10, overSpotify: true, pausedUntil: 0 };
 var watch = { running: [], visible: [], idleSince: 0, lastLaunch: 0, lastError: '' };
+// The app that was on screen when Ambient opened by itself (e.g. Spotify), so any
+// button press can send the viewer straight back to it. Empty means Samsung's home.
+var session = { autoAt: 0, prevApp: '' };
 var ownPkg = 'xvvl3S1bvH';
 try { ownPkg = tizen.application.getAppInfo().packageId || ownPkg; } catch (e) { /* keep the default */ }
 
@@ -159,7 +163,10 @@ function evaluate(ids, visible) {
   var idle = others.length === 0 || (auto.overSpotify && spotifyOnly);
   if (!auto.on || Date.now() < auto.pausedUntil || mine || !idle) { watch.idleSince = 0; return; }
   if (!watch.idleSince) watch.idleSince = Date.now();
-  if (Date.now() - watch.idleSince >= auto.delay * 1000 && Date.now() - watch.lastLaunch > 15000) openAmbient();
+  if (Date.now() - watch.idleSince >= auto.delay * 1000 && Date.now() - watch.lastLaunch > 15000) {
+    session = { autoAt: Date.now(), prevApp: others[0] || '' };
+    openAmbient();
+  }
 }
 
 var checking = false;
@@ -185,6 +192,13 @@ function checkScreen() {
 }
 // Every 2 s is plenty for a 5 s idle delay and keeps the load on the TV low; it does nothing while auto-start is off.
 setInterval(function () { if (auto.on && Date.now() >= auto.pausedUntil) checkScreen(); }, 2000);
+
+// The app asks this when it comes on screen: was it opened by the idle timer, and from where?
+function sendSession(res) {
+  var s = { auto: Date.now() - session.autoAt < 10000, prevApp: session.prevApp };
+  session.autoAt = 0;
+  send(res, 200, JSON.stringify(s));
+}
 
 function setConfig(res, json) {
   try {
@@ -243,6 +257,7 @@ var server = http.createServer(function (req, res) {
   if (parsed.pathname === '/icon') return sendIcon(res, String(parsed.query.id || ''));
   if (parsed.pathname === '/launch') return launchApp(res, String(parsed.query.id || ''));
   if (parsed.pathname === '/config') return setConfig(res, parsed.query.json);
+  if (parsed.pathname === '/session') return sendSession(res);
   if (parsed.pathname === '/open') return openBrowser(res, String(parsed.query.url || ''));
   if (parsed.pathname === '/callback') return spotifyCallback(res, parsed.query);
   if (parsed.pathname === '/spotify/result') return spotifyResult(res, String(parsed.query.state || ''));
