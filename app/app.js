@@ -28,7 +28,7 @@
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
     pins: null, pinned: null, look: 'cinematic',
-    autoOn: true, autoDelay: 10, autoOverSpotify: true,
+    autoOn: true, autoDelay: 10, autoOverSpotify: true, launcher: false,
     sleepAfter: 0, tone: 'neutral', motion: 'full',
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
     clockFont: 'modern', clockWeight: 'thin', clockColor: 'white', clockStyle: 'inline'
@@ -440,7 +440,7 @@
   // The TizenBrew service watches what is on screen and reopens Ambient when
   // nothing (or only Spotify) has been showing for S.autoDelay seconds.
   function sendAutoConfig() {
-    const cfg = { on: !!S.autoOn, delay: Number(S.autoDelay) || 5, overSpotify: !!S.autoOverSpotify };
+    const cfg = { on: !!S.autoOn, delay: Number(S.autoDelay) || 5, overSpotify: !!S.autoOverSpotify, launcher: !!S.launcher };
     fetch(SERVICE + '/config?json=' + encodeURIComponent(JSON.stringify(cfg))).catch(() => {});
   }
 
@@ -922,6 +922,7 @@
     { key: 'units', label: 'Units', options: [['c', '°C'], ['f', '°F']] },
     { type: 'section', label: 'Auto-start' },
     { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
+    { key: 'launcher', label: 'Launcher mode (Home → Ambient)', options: onOff },
     { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [10, '10 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
     { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
     { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
@@ -1016,7 +1017,7 @@
 
   function applySetting(item) {
     if (['city', 'units', 'weather'].indexOf(item.key) >= 0) updateWeather();
-    if (/^auto/.test(item.key)) sendAutoConfig();
+    if (/^auto|^launcher$/.test(item.key)) sendAutoConfig();
     if (item.key === 'miniPlayer') pollPlayer();
     if (item.key === 'caption' && current) render(current);
     if (item.key === 'artMat' && current && current.kind === 'art') render(current);
@@ -1136,7 +1137,10 @@
   async function checkSession() {
     try {
       const s = await getJSON(SERVICE + '/session');
-      if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
+      if (s.auto && !s.prevApp && S.launcher) {
+        // Launcher mode: replacing Samsung's home, so show the app dock instead of acting as a screensaver.
+        screensaver = false; lastInput = Date.now(); wake(); openDock();
+      } else if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
     } catch (e) { /* helper not running: normal app behaviour */ }
   }
 

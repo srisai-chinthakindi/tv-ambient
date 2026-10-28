@@ -103,7 +103,7 @@ function launchApp(res, id) {
 var MODULE = { moduleName: 'srisai-chinthakindi/tv-ambient', moduleType: 'gh' };
 var STANDALONE_PKG = 'AmbientTV1'; // package id in tizen/config.xml
 var SPOTIFY_APP = '3201606009684';
-var auto = { on: true, delay: 10, overSpotify: true, pausedUntil: 0 };
+var auto = { on: true, delay: 10, overSpotify: true, launcher: false, pausedUntil: 0 };
 var watch = { running: [], visible: [], idleSince: 0, lastLaunch: 0, lastError: '' };
 // The app that was on screen when Ambient opened by itself (e.g. Spotify), so any
 // button press can send the viewer straight back to it. Empty means Samsung's home.
@@ -163,7 +163,11 @@ function evaluate(ids, visible) {
   var idle = others.length === 0 || (auto.overSpotify && spotifyOnly);
   if (!auto.on || Date.now() < auto.pausedUntil || mine || !idle) { watch.idleSince = 0; return; }
   if (!watch.idleSince) watch.idleSince = Date.now();
-  if (Date.now() - watch.idleSince >= auto.delay * 1000 && Date.now() - watch.lastLaunch > 15000) {
+  // Launcher mode: Samsung's home with nothing open is replaced by Ambient after ~2 s.
+  var home = others.length === 0;
+  var delay = auto.launcher && home ? 2 : auto.delay;
+  var cooldown = auto.launcher ? 4000 : 15000;
+  if (Date.now() - watch.idleSince >= delay * 1000 && Date.now() - watch.lastLaunch > cooldown) {
     session = { autoAt: Date.now(), prevApp: others[0] || '' };
     openAmbient();
   }
@@ -206,6 +210,7 @@ function setConfig(res, json) {
     if (typeof c.on === 'boolean') auto.on = c.on;
     if (c.delay > 0 && c.delay <= 3600) auto.delay = c.delay;
     if (typeof c.overSpotify === 'boolean') auto.overSpotify = c.overSpotify;
+    if (typeof c.launcher === 'boolean') auto.launcher = c.launcher;
     if (c.pause > 0) auto.pausedUntil = Date.now() + c.pause * 60000;
     send(res, 200, JSON.stringify(auto));
   } catch (e) {
