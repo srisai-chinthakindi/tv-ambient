@@ -630,19 +630,35 @@
     }
   }
 
+  const ART_STYLE_NAMES = { japanese: 'Japanese prints', impressionism: 'Impressionism', landscapes: 'Landscapes', classics: 'Old masters' };
+
+  function captionTags(item) {
+    if (item.kind === 'scene') return ['Live wallpaper', 'Anime', 'Animated'];
+    if (item.kind === 'art') return ['Painting', ART_STYLE_NAMES[S.artStyle] || 'Art', 'Public domain'];
+    if (item.kind === 'nature' && /day/.test(item.credit || '')) return ['Picture of the day', 'Photography', 'Updated daily'];
+    if (item.kind === 'nature') return ['Nature', S.natureTopic.charAt(0).toUpperCase() + S.natureTopic.slice(1), 'Photography'];
+    return ['Ambient'];
+  }
+
   function setCaption(title, by, credit) {
     if (!S.caption || !title) { caption.innerHTML = ''; return; }
     caption.innerHTML = '';
-    if (S.look === 'cinematic' && current) {
-      const kicker = document.createElement('span');
-      kicker.className = 'kicker';
-      kicker.textContent = { scene: 'Live wallpaper', art: 'Painting', nature: current.credit && /day/.test(current.credit) ? 'Picture of the day' : 'Nature' }[current.kind] || 'Ambient';
-      caption.appendChild(kicker);
-    }
     const b = document.createElement('b');
     b.textContent = title.length > 90 ? title.slice(0, 87) + '…' : title;
     caption.appendChild(b);
-    caption.appendChild(document.createTextNode([by, credit].filter(Boolean).join(' — ')));
+    if (S.look === 'cinematic' && current) {
+      // Netflix layout: tags separated by dots, then one small info line.
+      const tags = document.createElement('div');
+      tags.className = 'tags';
+      tags.textContent = captionTags(current).join('  •  ');
+      const line = document.createElement('div');
+      line.className = 'line';
+      line.textContent = [by, credit].filter(Boolean).join('  ·  ');
+      caption.appendChild(tags);
+      caption.appendChild(line);
+    } else {
+      caption.appendChild(document.createTextNode([by, credit].filter(Boolean).join(' — ')));
+    }
     setTimeout(() => caption.classList.add('show'), 1200);
   }
 
@@ -688,6 +704,18 @@
     throw new Error('unknown source');
   }
 
+  // Fetch (and preload the image of) the next item while the current one is on screen,
+  // so changing wallpapers is instant instead of waiting for a download.
+  let upcoming = null;
+  function prefetch() {
+    const sources = enabledSources();
+    const source = sources[(sourceIndex + 1) % sources.length];
+    if (source === 'pinned') return;
+    const promise = produce(source);
+    promise.catch(() => {});
+    upcoming = { source, promise };
+  }
+
   async function next() {
     if (busy) return;
     busy = true;
@@ -695,9 +723,13 @@
     sourceIndex = (sourceIndex + 1) % sources.length;
     const source = sources[sourceIndex];
     try {
-      const item = await produce(source);
+      // Use the item fetched in the background while the previous one was showing, if it matches.
+      const ready = upcoming && upcoming.source === source ? upcoming.promise : null;
+      upcoming = null;
+      const item = await (ready || produce(source));
       if (current) { history.push(current); if (history.length > 20) history.shift(); }
       render(item);
+      prefetch();
     } catch (e) {
       // Network trouble or empty list: fall back to an offline scene.
       toast(/settings/.test(e.message) ? e.message : 'Could not load ' + source + ' — showing a scene', 4000);
@@ -726,6 +758,7 @@
   }
 
   function restartShow() {
+    upcoming = null;
     sourceIndex = -1;
     dailyOffset = -1;
     artQueue = [];
