@@ -29,7 +29,7 @@
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
     pins: null, pinned: null, look: 'cinematic',
-    autoOn: true, autoDelay: 15, autoOverSpotify: true, launcher: true,
+    autoOn: true, autoDelay: 15, autoOverSpotify: true, launcher: false,
     sleepAfter: 240, tone: 'neutral', motion: 'full',
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
     clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline'
@@ -943,7 +943,6 @@
     { key: 'units', label: 'Units', options: [['c', '°C'], ['f', '°F']] },
     { type: 'section', label: 'Auto-start' },
     { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
-    { key: 'launcher', label: 'Launcher mode (Home → Ambient)', options: onOff },
     { key: 'autoDelay', label: 'When idle for', options: [[15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
     { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
     { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
@@ -1215,10 +1214,7 @@
   async function checkSession() {
     try {
       const s = await getJSON(SERVICE + '/session');
-      if (s.auto && !s.prevApp && S.launcher) {
-        // Launcher mode: replacing Samsung's home, so show the app dock instead of acting as a screensaver.
-        screensaver = false; lastInput = Date.now(); wake(); openDock();
-      } else if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
+      if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
     } catch (e) { /* helper not running: normal app behaviour */ }
   }
 
@@ -1468,7 +1464,7 @@
           S.clock = !S.clock; S.date = S.clock; saveSettings(); applyHud();
         }
         break;
-      case K.DOWN: e.preventDefault(); openDock(); break;
+      case K.DOWN: e.preventDefault(); caption.classList.toggle('show'); break;
       case K.INFO:
         e.preventDefault();
         caption.classList.toggle('show');
@@ -1550,5 +1546,5 @@
   setInterval(updateWeather, 15 * 60 * 1000);
   setInterval(keepAwake, 5 * 60 * 1000);
   next();
-  setTimeout(() => toast('OK: settings  ·  ▼: your apps  ·  ▲: music  ·  ◀ ▶: change', 5000), 1500);
+  setTimeout(() => toast('OK: settings  ·  ▲: music  ·  ◀ ▶: change', 5000), 1500);
 })();

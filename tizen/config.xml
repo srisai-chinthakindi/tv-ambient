@@ -2,7 +2,7 @@
 <!-- Standalone Tizen package for Ambient (installed with TizenBrew Installer → Install from GitHub).
      Packaging follows Skylight (github.com/SaudSatopay/skylight-tizen, MIT). -->
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
-        id="http://ambient.home/tv" version="1.0.3" viewmodes="maximized">
+        id="http://ambient.home/tv" version="1.0.4" viewmodes="maximized">
     <!-- Wallpapers, weather and Spotify come from the internet; the TV's status service is local. -->
     <access origin="*" subdomains="true"/>
     <tizen:application id="AmbientTV1.Ambient" package="AmbientTV1" required_version="3.0"/>
