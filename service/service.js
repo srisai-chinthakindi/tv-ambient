@@ -103,7 +103,7 @@ function launchApp(res, id) {
 var MODULE = { moduleName: 'srisai-chinthakindi/tv-ambient', moduleType: 'gh' };
 var STANDALONE_PKG = 'AmbientTV1'; // package id in tizen/config.xml
 var SPOTIFY_APP = '3201606009684';
-var auto = { on: true, delay: 10, overSpotify: true, launcher: false, pausedUntil: 0 };
+var auto = { on: true, delay: 15, overSpotify: true, launcher: false, pausedUntil: 0 };
 var watch = { running: [], visible: [], idleSince: 0, lastLaunch: 0, lastError: '' };
 // The app that was on screen when Ambient opened by itself (e.g. Spotify), so any
 // button press can send the viewer straight back to it. Empty means Samsung's home.
@@ -114,16 +114,21 @@ var aliveAt = 0;
 var ownPkg = 'xvvl3S1bvH';
 try { ownPkg = tizen.application.getAppInfo().packageId || ownPkg; } catch (e) { /* keep the default */ }
 
-// The TV's own status service tells us whether an app is on screen.
+// The TV's own status service tells us whether an app is on screen. Every request
+// has a short timeout: one request that never answers must not stall the watcher.
 function appState(id, done) {
-  http.get({ host: '127.0.0.1', port: 8001, path: '/api/v2/applications/' + encodeURIComponent(id) }, function (res) {
+  var finished = false;
+  function finish(v) { if (!finished) { finished = true; done(v); } }
+  var req = http.get({ host: '127.0.0.1', port: 8001, path: '/api/v2/applications/' + encodeURIComponent(id) }, function (res) {
     var body = '';
     res.setEncoding('utf8');
     res.on('data', function (c) { body += c; });
     res.on('end', function () {
-      try { done(JSON.parse(body)); } catch (e) { done(null); }
+      try { finish(JSON.parse(body)); } catch (e) { finish(null); }
     });
-  }).on('error', function () { done(null); });
+  });
+  req.setTimeout(1500, function () { req.abort(); finish(null); });
+  req.on('error', function () { finish(null); });
 }
 
 function openAmbient() {
@@ -166,38 +171,67 @@ function evaluate(ids, visible) {
   var idle = others.length === 0 || (auto.overSpotify && spotifyOnly);
   if (!auto.on || Date.now() < auto.pausedUntil || mine || !idle) { watch.idleSince = 0; return; }
   if (!watch.idleSince) watch.idleSince = Date.now();
-  // Launcher mode: Samsung's home with nothing open is replaced by Ambient after ~2 s.
-  var home = others.length === 0;
-  var delay = auto.launcher && home ? 2 : auto.delay;
-  var cooldown = auto.launcher ? 4000 : 15000;
-  if (Date.now() - watch.idleSince >= delay * 1000 && Date.now() - watch.lastLaunch > cooldown) {
+  if (Date.now() - watch.idleSince >= auto.delay * 1000 && Date.now() - watch.lastLaunch > 15000) {
+    // Re-check every installed app right before opening, so an app opened a moment
+    // ago (not yet in the running list) is never covered.
+    if (Date.now() - lastSweep > 3000) { sweepRunning(); return; }
     session = { autoAt: Date.now(), prevApp: others[0] || '' };
     openAmbient();
   }
 }
 
-var checking = false;
-function checkScreen() {
-  if (checking || typeof tizen === 'undefined' || !tizen.application) return;
-  checking = true;
-  tizen.application.getAppsContext(function (ctxs) {
-    var ids = [];
-    for (var i = 0; i < ctxs.length; i++) if (ids.indexOf(ctxs[i].appId) < 0) ids.push(ctxs[i].appId);
-    var pending = ids.length, visible = [];
-    function finish() { evaluate(ids, visible); checking = false; }
-    if (!pending) return finish();
-    ids.forEach(function (id) {
-      appState(id, function (st) {
-        if (st && st.visible) visible.push(id);
-        if (--pending === 0) finish();
-      });
+// Which apps to watch. The status service only knows apps by their store ID
+// (Netflix is 3201907018807), while the running-apps list uses internal names
+// (org.tizen.netflix-app), so we list every installed app's real ID, find the
+// running ones every 20 s, and check only those for "on screen" every 2 s.
+var installed = [], runningIds = [], lastSweep = 0, sweeping = false;
+
+function loadInstalled() {
+  try {
+    tizen.application.getAppsInfo(function (infos) {
+      installed = [];
+      for (var i = 0; i < infos.length; i++) {
+        if (infos[i].show && infos[i].id.indexOf(ownPkg) !== 0) installed.push(infos[i].id);
+      }
+    }, function (e) { watch.lastError = 'appsinfo: ' + (e && e.message); });
+  } catch (e) { watch.lastError = 'appsinfo: ' + e.message; }
+}
+
+function sweepRunning() {
+  if (sweeping || !installed.length) return;
+  sweeping = true;
+  var found = [], pending = installed.length;
+  installed.forEach(function (id) {
+    appState(id, function (st) {
+      if (st && st.running) found.push(id);
+      if (--pending === 0) { runningIds = found; lastSweep = Date.now(); sweeping = false; }
     });
-  }, function (e) {
-    watch.lastError = 'context: ' + (e && e.message);
-    checking = false;
   });
 }
-// Every 2 s is plenty for a 5 s idle delay and keeps the load on the TV low; it does nothing while auto-start is off.
+
+var checking = false, checkStarted = 0;
+function checkScreen() {
+  // Watchdog: never let one stuck check stop the watcher for good.
+  if (checking && Date.now() - checkStarted < 10000) return;
+  checking = true;
+  checkStarted = Date.now();
+  if (Date.now() - lastSweep > 20000) sweepRunning();
+  var ids = runningIds.slice(), pending = ids.length, visible = [];
+  function finish() { evaluate(ids, visible); checking = false; }
+  if (!pending) return finish();
+  ids.forEach(function (id) {
+    appState(id, function (st) {
+      if (st && st.visible) {
+        visible.push(id);
+        // An app just came on screen: keep checking it even before the next sweep.
+      }
+      if (st && st.running === false) runningIds = runningIds.filter(function (x) { return x !== id; });
+      if (--pending === 0) finish();
+    });
+  });
+}
+loadInstalled();
+setInterval(loadInstalled, 10 * 60 * 1000);
 setInterval(function () { if (auto.on && Date.now() >= auto.pausedUntil) checkScreen(); }, 2000);
 
 // The app asks this when it comes on screen: was it opened by the idle timer, and from where?
@@ -211,7 +245,7 @@ function setConfig(res, json) {
   try {
     var c = JSON.parse(json || '{}');
     if (typeof c.on === 'boolean') auto.on = c.on;
-    if (c.delay > 0 && c.delay <= 3600) auto.delay = c.delay;
+    if (c.delay >= 15 && c.delay <= 3600) auto.delay = c.delay;
     if (typeof c.overSpotify === 'boolean') auto.overSpotify = c.overSpotify;
     if (typeof c.launcher === 'boolean') auto.launcher = c.launcher;
     if (c.pause > 0) auto.pausedUntil = Date.now() + c.pause * 60000;

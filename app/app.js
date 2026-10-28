@@ -29,7 +29,7 @@
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
     pins: null, pinned: null, look: 'cinematic',
-    autoOn: true, autoDelay: 10, autoOverSpotify: true, launcher: true,
+    autoOn: true, autoDelay: 15, autoOverSpotify: true, launcher: true,
     sleepAfter: 240, tone: 'neutral', motion: 'full',
     spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
     clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline'
@@ -457,7 +457,7 @@
   // The TizenBrew service watches what is on screen and reopens Ambient when
   // nothing (or only Spotify) has been showing for S.autoDelay seconds.
   function sendAutoConfig() {
-    const cfg = { on: !!S.autoOn, delay: Number(S.autoDelay) || 5, overSpotify: !!S.autoOverSpotify, launcher: !!S.launcher };
+    const cfg = { on: !!S.autoOn, delay: Math.max(15, Number(S.autoDelay) || 15), overSpotify: !!S.autoOverSpotify, launcher: !!S.launcher };
     fetch(SERVICE + '/config?json=' + encodeURIComponent(JSON.stringify(cfg))).catch(() => {});
   }
 
@@ -944,7 +944,7 @@
     { type: 'section', label: 'Auto-start' },
     { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
     { key: 'launcher', label: 'Launcher mode (Home → Ambient)', options: onOff },
-    { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [10, '10 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
+    { key: 'autoDelay', label: 'When idle for', options: [[15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
     { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
     { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
     { type: 'section', label: 'Spotify mini player' },
