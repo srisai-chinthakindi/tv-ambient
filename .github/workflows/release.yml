@@ -1,0 +1,36 @@
+# Builds Ambient.wgt and publishes it as a GitHub release whenever the version
+# in tizen/config.xml changes, so TizenBrew Installer ("Install from GitHub")
+# always finds the latest app.
+name: Release Ambient.wgt
+
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'service/**', 'tizen/**', 'tools/build_wgt.py']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(grep -oP '(?<= version=")[0-9.]+' tizen/config.xml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Ambient.wgt
+        run: python3 tools/build_wgt.py Ambient.wgt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" Ambient.wgt --clobber
+          else
+            gh release create "$TAG" Ambient.wgt --title "Ambient $TAG" --notes "Install on the TV with TizenBrew Installer → Install from GitHub → srisai-chinthakindi/tv-ambient"
+          fi

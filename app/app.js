@@ -16,18 +16,23 @@
 
   const DEFAULTS = {
     mode: 'mix',
-    mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: true, mixNetflix: false,
+    mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: false, mixNetflix: false,
     scene: 'auto',
     artStyle: 'japanese', artMat: 'light', caption: true,
     natureTopic: 'landscapes',
-    interval: 0.05,
+    // Best-experience defaults (Apple TV style): calm 15 s changes; 3 s is available in settings.
+    interval: 0.25,
     clock: true, clock24: false, seconds: false, clockSize: 'm', clockPos: 'br', date: true,
     weather: true, city: 'Hyderabad', units: 'c',
     brightness: 100, nightDim: '23-7',
     quality: 'standard',
     videos: '', wallList: 'my-wallpapers.txt',
     songsCountry: 'in', tmdbKey: '',
-    pins: null, pinned: null
+    pins: null, pinned: null, look: 'cinematic',
+    autoOn: true, autoDelay: 10, autoOverSpotify: true, launcher: true,
+    sleepAfter: 240, tone: 'neutral', motion: 'full',
+    spotifyClientId: '', spotifyRefresh: '', miniPlayer: true,
+    clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline'
   };
   const STORE_KEY = 'ambient.settings.v1';
 
@@ -124,6 +129,20 @@
     rafId = requestAnimationFrame(frame);
   }
 
+  // Overlays (settings, dock, picker, calibration) pause the wallpaper so the
+  // TV's processor is free for the menu; the last frame stays on screen.
+  let overlays = 0;
+  function pauseForOverlay(on) {
+    overlays = Math.max(0, overlays + (on ? 1 : -1));
+    if (overlays > 0) {
+      cancelAnimationFrame(rafId); rafId = 0;
+      clearTimeout(rotateTimer);
+    } else {
+      if (current && current.kind === 'scene' && sceneState && !rafId && S.motion !== 'still') { lastFrame = 0; rafId = requestAnimationFrame(frame); }
+      scheduleRotate();
+    }
+  }
+
   function stopScene() {
     cancelAnimationFrame(rafId);
     rafId = 0;
@@ -141,6 +160,8 @@
     const z = 1.02 + Math.sin(t / 40) * 0.02;
     ctx.drawImage(sceneState.bg, -(z - 1) * w / 2, -(z - 1) * h / 2, w * z, h * z);
     scene.draw(ctx, sceneState, w, h, t, dt);
+    // Motion: Still — draw one frame and stop.
+    if (S.motion === 'still') { cancelAnimationFrame(rafId); rafId = 0; }
   }
 
   let autoSceneIndex = Math.floor(Math.random() * SCENES.length);
@@ -191,7 +212,7 @@
       natureTitles = shuffle((data.query.categorymembers || []).map((m) => m.title));
       natureTopicLoaded = S.natureTopic;
     }
-    const width = S.quality === 'high' ? 3840 : 2560;
+    const width = S.quality === 'high' ? 3840 : 1920;
     for (let tries = 0; tries < 10 && natureTitles.length; tries++) {
       const title = natureTitles.pop();
       try {
@@ -325,7 +346,7 @@
 
   async function dailyItem(day) {
     if (day in dailyCache) return dailyCache[day];
-    const width = S.quality === 'high' ? 3840 : 2560;
+    const width = S.quality === 'high' ? 3840 : 1920;
     const data = await getJSON(COMMONS + '&generator=images&prop=imageinfo&iiprop=url|size|extmetadata&iiextmetadatafilter=Artist|LicenseShortName&iiurlwidth=' + width + '&titles=' + encodeURIComponent('Template:Potd/' + day));
     const pages = data.query ? Object.values(data.query.pages) : [];
     const pg = pages.find((p) => p.imageinfo && p.imageinfo[0].width >= p.imageinfo[0].height * 1.2);
@@ -376,6 +397,7 @@
     closeMenu();
     picking = true; pickSel = 0;
     picker.classList.add('show');
+    pauseForOverlay(true);
     pickerList.innerHTML = '<div class="pick-loading">Loading wallpapers…</div>';
     const items = SCENES.map((sc) => ({ item: { kind: 'scene', id: sc.id, name: sc.name }, thumb: sceneThumb(sc), label: sc.name, tag: 'Live' }));
     for (let i = 0; i < 8; i++) {
@@ -406,6 +428,7 @@
   }
 
   function closePicker() {
+    if (picking) pauseForOverlay(false);
     picking = false;
     picker.classList.remove('show');
   }
@@ -429,6 +452,140 @@
     renderPicker();
   }
 
+  /* -------------------- Auto-start (helper on the TV) -------------------- */
+
+  // The TizenBrew service watches what is on screen and reopens Ambient when
+  // nothing (or only Spotify) has been showing for S.autoDelay seconds.
+  function sendAutoConfig() {
+    const cfg = { on: !!S.autoOn, delay: Number(S.autoDelay) || 5, overSpotify: !!S.autoOverSpotify, launcher: !!S.launcher };
+    fetch(SERVICE + '/config?json=' + encodeURIComponent(JSON.stringify(cfg))).catch(() => {});
+  }
+
+  /* ------------------------- Spotify mini player ------------------------- */
+
+  // Spotify login uses PKCE (no secret): the helper opens Spotify's login page
+  // in the TV browser and catches the redirect on http://127.0.0.1:8095/callback.
+  const SPOTIFY_REDIRECT = SERVICE + '/callback';
+  const player = $('player');
+  let spAccess = '', spAccessUntil = 0, spState = null, playerFocus = false;
+
+  function b64url(bytes) {
+    let s = '';
+    bytes.forEach((b) => { s += String.fromCharCode(b); });
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  async function connectSpotify() {
+    if (!S.spotifyClientId) { toast('Add your Spotify Client ID first (see the guide on GitHub)', 5000); return; }
+    const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+    const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    const state = b64url(crypto.getRandomValues(new Uint8Array(12)));
+    const auth = 'https://accounts.spotify.com/authorize?response_type=code&code_challenge_method=S256' +
+      '&client_id=' + encodeURIComponent(S.spotifyClientId) +
+      '&scope=' + encodeURIComponent('user-read-playback-state user-modify-playback-state user-read-currently-playing') +
+      '&redirect_uri=' + encodeURIComponent(SPOTIFY_REDIRECT) +
+      '&code_challenge=' + challenge + '&state=' + state;
+    try {
+      await getJSON(SERVICE + '/open?url=' + encodeURIComponent(auth));
+    } catch (e) {
+      toast('Could not open the browser. Open Ambient from TizenBrew and try again.', 5000);
+      return;
+    }
+    toast('Log in to Spotify in the browser, then come back here', 6000);
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      let res;
+      try { res = await getJSON(SERVICE + '/spotify/result?state=' + state); } catch (e) { continue; }
+      if (res.error) { toast('Spotify login was cancelled', 4000); return; }
+      if (!res.code) continue;
+      const tok = await spotifyToken({ grant_type: 'authorization_code', code: res.code, redirect_uri: SPOTIFY_REDIRECT, code_verifier: verifier });
+      if (tok) { toast('Spotify connected', 3000); renderMenu(); pollPlayer(); }
+      return;
+    }
+    toast('Spotify login timed out', 4000);
+  }
+
+  async function spotifyToken(params) {
+    params.client_id = S.spotifyClientId;
+    const body = Object.keys(params).map((k) => k + '=' + encodeURIComponent(params[k])).join('&');
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body
+    });
+    if (!res.ok) { if (res.status === 400) { S.spotifyRefresh = ''; saveSettings(); } return null; }
+    const t = await res.json();
+    spAccess = t.access_token;
+    spAccessUntil = Date.now() + (t.expires_in - 60) * 1000;
+    if (t.refresh_token) { S.spotifyRefresh = t.refresh_token; saveSettings(); }
+    return t;
+  }
+
+  async function spotifyApi(method, path) {
+    if (!S.spotifyRefresh || !S.spotifyClientId) return null;
+    if (!spAccess || Date.now() > spAccessUntil) {
+      if (!await spotifyToken({ grant_type: 'refresh_token', refresh_token: S.spotifyRefresh })) return null;
+    }
+    const res = await fetch('https://api.spotify.com/v1' + path, { method, headers: { Authorization: 'Bearer ' + spAccess } });
+    if (res.status === 204 || method !== 'GET') return res.ok || res.status === 204 ? {} : null;
+    return res.ok ? res.json() : null;
+  }
+
+  async function pollPlayer() {
+    if (!S.miniPlayer || !S.spotifyRefresh) { spState = null; renderPlayer(); return; }
+    try { spState = await spotifyApi('GET', '/me/player'); } catch (e) { spState = null; }
+    renderPlayer();
+  }
+
+  function renderPlayer() {
+    const item = spState && spState.item;
+    player.classList.toggle('hidden', !item);
+    if (!item) { playerFocus = false; return; }
+    const art = (item.album && item.album.images && item.album.images[item.album.images.length > 1 ? 1 : 0]) || {};
+    const pct = item.duration_ms ? Math.min(100, (spState.progress_ms || 0) / item.duration_ms * 100) : 0;
+    player.classList.toggle('focus', playerFocus);
+    player.innerHTML =
+      (art.url ? '<img src="' + esc(art.url) + '" alt="">' : '') +
+      '<div class="pl-body"><b>' + esc(item.name) + '</b><span>' + esc((item.artists || []).map((a) => a.name).join(', ')) + '</span>' +
+      '<div class="pl-bar"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
+      '<div class="pl-ctl"><em>⏮</em><em class="pp">' + (spState.is_playing ? '❚❚' : '▶') + '</em><em>⏭</em></div></div>';
+  }
+
+  async function playerCommand(cmd) {
+    const playing = spState && spState.is_playing;
+    const ok = cmd === 'prev' ? await spotifyApi('POST', '/me/player/previous')
+      : cmd === 'next' ? await spotifyApi('POST', '/me/player/next')
+      : await spotifyApi('PUT', playing ? '/me/player/pause' : '/me/player/play');
+    if (!ok) toast('Spotify did not accept that (playback control needs Spotify Premium)', 4000);
+    setTimeout(pollPlayer, 600);
+  }
+
+  function playerKey(k) {
+    if (k === K.LEFT) playerCommand('prev');
+    else if (k === K.RIGHT) playerCommand('next');
+    else if (k === K.ENTER || k === K.PLAYPAUSE) playerCommand('toggle');
+    else if (k === K.DOWN || k === K.BACK || k === K.ESC || k === K.BACKSPACE) { playerFocus = false; renderPlayer(); }
+  }
+
+  /* ----------------------- Clock style (Mac-like) ------------------------ */
+
+  const CLOCK_FONTS = {
+    modern: '"Outfit", sans-serif',
+    classic: '"Fraunces", Georgia, serif',
+    rounded: '"Nunito", sans-serif',
+    mono: '"JetBrains Mono", monospace',
+    condensed: '"Bebas Neue", "Outfit", sans-serif'
+  };
+  const CLOCK_COLORS = { white: '#ffffff', warm: '#ffe2b8', rose: '#ffc4d6', mint: '#b9f5dc', sky: '#bcdcff', gold: '#ffd36b' };
+  const CLOCK_WEIGHTS = { thin: 200, regular: 400, bold: 700 };
+
+  function applyClockStyle() {
+    const clock = $('clock');
+    clock.style.fontFamily = CLOCK_FONTS[S.clockFont] || CLOCK_FONTS.modern;
+    clock.style.fontWeight = CLOCK_WEIGHTS[S.clockWeight] || 200;
+    // On the white gallery mat a white clock would vanish; keep the dark ink there.
+    hud.style.color = document.body.classList.contains('light') && S.clockColor === 'white' ? '' : (CLOCK_COLORS[S.clockColor] || '#fff');
+    clock.classList.toggle('stacked', S.clockStyle === 'stacked');
+  }
+
   /* ---------------------------- Display --------------------------------- */
 
   let activeSlide = 0;
@@ -446,19 +603,22 @@
   function render(item) {
     current = item;
     caption.classList.remove('show', 'on-light');
-    document.body.classList.toggle('light', item.kind === 'art' && S.artMat === 'light');
-    document.body.classList.toggle('photo', ['nature', 'video', 'wallimg', 'card'].indexOf(item.kind) >= 0 || (item.kind === 'art' && S.artMat === 'none'));
+    const cin = S.look === 'cinematic';
+    document.body.classList.toggle('light', !cin && item.kind === 'art' && S.artMat === 'light');
+    applyClockStyle();
+    document.body.classList.toggle('photo', cin || ['nature', 'video', 'wallimg', 'card'].indexOf(item.kind) >= 0 || (item.kind === 'art' && S.artMat === 'none'));
     if (item.kind === 'scene') {
       showLayer('scene');
       startScene(item.id);
-      setCaption(item.name, 'Ambient scene', '');
+      setCaption(item.name, cin ? '' : 'Ambient scene', '');
     } else if (item.kind === 'art' || item.kind === 'nature' || item.kind === 'wallimg') {
       showLayer('photo');
       const next = slides[1 - activeSlide];
-      next.className = 'slide ' + (item.kind === 'art' ? 'art mat-' + S.artMat : 'cover');
+      // Cinematic look: everything full-bleed; Gallery look: paintings on a mat.
+      next.className = 'slide ' + (item.kind === 'art' && !cin ? 'art mat-' + S.artMat : 'cover');
       const img = next.querySelector('img');
       img.style.width = img.style.height = '';
-      if (item.kind === 'art') {
+      if (item.kind === 'art' && !cin) {
         // Scale the artwork to fill the mat, whatever its source resolution.
         img.onload = () => {
           const pad = S.artMat === 'none' ? 0 : 1;
@@ -472,10 +632,12 @@
       }
       img.src = item.url;
       next.classList.add('show');
-      slides[activeSlide].classList.remove('show');
+      const old = slides[activeSlide];
+      old.classList.remove('show');
+      setTimeout(() => { if (!old.classList.contains('show')) old.querySelector('img').removeAttribute('src'); }, 2500);
       activeSlide = 1 - activeSlide;
       setCaption(item.title || '', item.by, item.credit);
-      if (item.kind === 'art' && S.artMat === 'light') caption.classList.add('on-light');
+      if (!cin && item.kind === 'art' && S.artMat === 'light') caption.classList.add('on-light');
     } else if (item.kind === 'card') {
       showLayer('card');
       card.innerHTML = '<div class="card-bg' + (item.sharp ? ' sharp' : '') + '"></div><div class="card-body">' + item.html + '</div>';
@@ -490,13 +652,35 @@
     }
   }
 
+  const ART_STYLE_NAMES = { japanese: 'Japanese prints', impressionism: 'Impressionism', landscapes: 'Landscapes', classics: 'Old masters' };
+
+  function captionTags(item) {
+    if (item.kind === 'scene') return ['Live wallpaper', 'Anime', 'Animated'];
+    if (item.kind === 'art') return ['Painting', ART_STYLE_NAMES[S.artStyle] || 'Art', 'Public domain'];
+    if (item.kind === 'nature' && /day/.test(item.credit || '')) return ['Picture of the day', 'Photography', 'Updated daily'];
+    if (item.kind === 'nature') return ['Nature', S.natureTopic.charAt(0).toUpperCase() + S.natureTopic.slice(1), 'Photography'];
+    return ['Ambient'];
+  }
+
   function setCaption(title, by, credit) {
     if (!S.caption || !title) { caption.innerHTML = ''; return; }
     caption.innerHTML = '';
     const b = document.createElement('b');
     b.textContent = title.length > 90 ? title.slice(0, 87) + '…' : title;
     caption.appendChild(b);
-    caption.appendChild(document.createTextNode([by, credit].filter(Boolean).join(' — ')));
+    if (S.look === 'cinematic' && current) {
+      // Netflix layout: tags separated by dots, then one small info line.
+      const tags = document.createElement('div');
+      tags.className = 'tags';
+      tags.textContent = captionTags(current).join('  •  ');
+      const line = document.createElement('div');
+      line.className = 'line';
+      line.textContent = [by, credit].filter(Boolean).join('  ·  ');
+      caption.appendChild(tags);
+      caption.appendChild(line);
+    } else {
+      caption.appendChild(document.createTextNode([by, credit].filter(Boolean).join(' — ')));
+    }
     setTimeout(() => caption.classList.add('show'), 1200);
   }
 
@@ -542,6 +726,18 @@
     throw new Error('unknown source');
   }
 
+  // Fetch (and preload the image of) the next item while the current one is on screen,
+  // so changing wallpapers is instant instead of waiting for a download.
+  let upcoming = null;
+  function prefetch() {
+    const sources = enabledSources();
+    const source = sources[(sourceIndex + 1) % sources.length];
+    if (source === 'pinned') return;
+    const promise = produce(source);
+    promise.catch(() => {});
+    upcoming = { source, promise };
+  }
+
   async function next() {
     if (busy) return;
     busy = true;
@@ -549,9 +745,13 @@
     sourceIndex = (sourceIndex + 1) % sources.length;
     const source = sources[sourceIndex];
     try {
-      const item = await produce(source);
+      // Use the item fetched in the background while the previous one was showing, if it matches.
+      const ready = upcoming && upcoming.source === source ? upcoming.promise : null;
+      upcoming = null;
+      const item = await (ready || produce(source));
       if (current) { history.push(current); if (history.length > 20) history.shift(); }
       render(item);
+      prefetch();
     } catch (e) {
       // Network trouble or empty list: fall back to an offline scene.
       toast(/settings/.test(e.message) ? e.message : 'Could not load ' + source + ' — showing a scene', 4000);
@@ -573,6 +773,7 @@
 
   function scheduleRotate() {
     clearTimeout(rotateTimer);
+    if (typeof overlays !== 'undefined' && overlays > 0) return;
     if (paused) return;
     document.body.classList.toggle('fast', S.interval < 1);
     if (S.mode === 'pinned') return;
@@ -580,6 +781,7 @@
   }
 
   function restartShow() {
+    upcoming = null;
     sourceIndex = -1;
     dailyOffset = -1;
     artQueue = [];
@@ -592,19 +794,20 @@
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const pad = (n) => (n < 10 ? '0' : '') + n;
 
+  let lastClock = '';
   function tick() {
     const d = new Date();
     let hr = d.getHours();
     let html;
     if (S.clock24) {
-      html = pad(hr) + ':' + pad(d.getMinutes());
+      html = pad(hr) + (S.clockStyle === 'stacked' ? '<br>' : ':') + pad(d.getMinutes());
     } else {
       const ampm = hr < 12 ? 'AM' : 'PM';
       hr = hr % 12 || 12;
-      html = hr + ':' + pad(d.getMinutes()) + '<span class="ampm">' + ampm + '</span>';
+      html = (S.clockStyle === 'stacked' ? pad(hr) + '<br>' : hr + ':') + pad(d.getMinutes()) + '<span class="ampm">' + ampm + '</span>';
     }
     if (S.seconds) html += '<span class="sec">' + pad(d.getSeconds()) + '</span>';
-    $('clock').innerHTML = html;
+    if (html !== lastClock) { $('clock').innerHTML = html; lastClock = html; }
     $('date').textContent = DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()];
     applyDim();
   }
@@ -614,7 +817,9 @@
     $('clock').classList.toggle('hidden', !S.clock);
     $('date').classList.toggle('hidden', !S.date);
     $('weather').classList.toggle('hidden', !S.weather);
-    hud.classList.toggle('hidden', !S.clock && !S.date && !S.weather);
+    hud.classList.toggle('hidden', !S.clock && !S.date && !S.weather && player.classList.contains('hidden'));
+    applyClockStyle();
+    document.body.classList.toggle('cinematic', S.look === 'cinematic');
   }
 
   // Nudge the overlay a few pixels every minute so nothing sits in one spot for hours.
@@ -685,6 +890,18 @@
 
   const onOff = [[true, 'On'], [false, 'Off']];
   const MENU = [
+    { type: 'section', label: 'Look' },
+    { label: 'Apply Apple TV style (recommended)', type: 'action', run: () => {
+      Object.assign(S, {
+        look: 'cinematic', mode: 'mix', interval: 0.25,
+        mixAnime: true, mixArt: true, mixNature: true, mixDaily: true, mixWalls: false, mixSongs: false, mixNetflix: false,
+        clock: true, clock24: false, seconds: false, date: true, weather: true, caption: true,
+        clockFont: 'modern', clockWeight: 'regular', clockColor: 'white', clockStyle: 'inline',
+        quality: 'standard', miniPlayer: true
+      });
+      saveSettings(); applyAll(); restartShow(); renderMenu(); toast('Apple TV style applied');
+    } },
+    { key: 'look', label: 'Style', options: [['cinematic', 'Cinematic (Netflix / Apple TV)'], ['gallery', 'Gallery (art on a mat)']], restart: true },
     { type: 'section', label: 'What to show' },
     { key: 'mode', label: 'Show', options: [['mix', 'Mix (choose below)'], ['anime', 'Anime scenes'], ['art', 'Paintings'], ['nature', 'Nature photos'], ['daily', 'Daily pictures'], ['walls', 'My wallpapers'], ['pinned', 'My chosen wallpaper'], ['songs', 'Trending songs'], ['netflix', 'Popular on Netflix']], restart: true },
     { label: 'Choose a wallpaper…', type: 'action', run: () => openPicker() },
@@ -716,18 +933,52 @@
     { key: 'seconds', label: 'Seconds', options: onOff },
     { key: 'clockSize', label: 'Size', options: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']] },
     { key: 'clockPos', label: 'Position', options: [['br', 'Bottom right'], ['bl', 'Bottom left'], ['tr', 'Top right'], ['tl', 'Top left'], ['c', 'Centre']] },
+    { key: 'clockFont', label: 'Clock font', options: [['modern', 'Modern'], ['classic', 'Classic serif'], ['rounded', 'Rounded'], ['mono', 'Mono'], ['condensed', 'Tall condensed']] },
+    { key: 'clockWeight', label: 'Clock weight', options: [['thin', 'Thin'], ['regular', 'Regular'], ['bold', 'Bold']] },
+    { key: 'clockColor', label: 'Clock colour', options: [['white', 'White'], ['warm', 'Warm'], ['rose', 'Rose'], ['mint', 'Mint'], ['sky', 'Sky'], ['gold', 'Gold']] },
+    { key: 'clockStyle', label: 'Clock layout', options: [['inline', 'Side by side'], ['stacked', 'Stacked']] },
     { key: 'date', label: 'Date', options: onOff },
     { key: 'weather', label: 'Weather', options: onOff },
     { key: 'city', label: 'City', type: 'text', placeholder: 'e.g. Hyderabad' },
     { key: 'units', label: 'Units', options: [['c', '°C'], ['f', '°F']] },
+    { type: 'section', label: 'Auto-start' },
+    { key: 'autoOn', label: 'Open Ambient by itself', options: onOff },
+    { key: 'launcher', label: 'Launcher mode (Home → Ambient)', options: onOff },
+    { key: 'autoDelay', label: 'When idle for', options: [[5, '5 sec'], [10, '10 sec'], [15, '15 sec'], [30, '30 sec'], [60, '1 min'], [300, '5 min']] },
+    { key: 'autoOverSpotify', label: 'Also over Spotify', options: onOff },
+    { label: 'Pause auto-start for 30 min', type: 'action', run: () => { fetch(SERVICE + '/config?json=' + encodeURIComponent('{"pause":30}')).catch(() => {}); toast('Auto-start paused for 30 minutes'); } },
+    { type: 'section', label: 'Spotify mini player' },
+    { key: 'miniPlayer', label: 'Mini player', options: onOff },
+    { key: 'spotifyClientId', label: 'Spotify Client ID', type: 'text', placeholder: 'From developer.spotify.com (see guide)' },
+    { label: 'Connect Spotify', type: 'action', run: () => { closeMenu(); connectSpotify(); } },
+    { label: 'Disconnect Spotify', type: 'action', run: () => { S.spotifyRefresh = ''; spAccess = ''; saveSettings(); pollPlayer(); toast('Spotify disconnected'); } },
     { type: 'section', label: 'Display' },
+    { label: 'Picture calibration patterns', type: 'action', run: () => openCalib() },
+    { key: 'sleepAfter', label: 'Turn screen off after', options: [[0, 'Never'], [30, '30 min'], [60, '1 hour'], [120, '2 hours'], [240, '4 hours']] },
+    { key: 'tone', label: 'Colour tone', options: [['neutral', 'Neutral'], ['warm', 'Warm'], ['cool', 'Cool']] },
+    { key: 'motion', label: 'Motion', options: [['full', 'Full'], ['reduced', 'Reduced (no zoom)'], ['still', 'Still (no animation)']], restart: true },
     { key: 'brightness', label: 'Brightness', options: [[100, '100%'], [90, '90%'], [80, '80%'], [70, '70%'], [60, '60%'], [50, '50%'], [40, '40%']] },
     { key: 'nightDim', label: 'Night dimming', options: [['off', 'Off'], ['22-6', '10 PM – 6 AM'], ['23-7', '11 PM – 7 AM'], ['0-6', '12 AM – 6 AM']] },
     { key: 'quality', label: 'Image quality', options: [['standard', 'Standard (faster)'], ['high', 'High (4K, slower)']] },
     { label: 'Reset all settings', type: 'action', run: () => { S = Object.assign({}, DEFAULTS); saveSettings(); applyAll(); restartShow(); renderMenu(); toast('Settings reset'); } }
   ];
-  const selectable = MENU.filter((m) => m.type !== 'section');
-  let menuSel = 0, editing = null;
+  // Settings are shown like tvOS Settings: categories on the left, that
+  // category's options on the right. Rows are built once per category and
+  // only the changed row is updated afterwards, so moving through the menu
+  // stays instant on TV hardware.
+  const CATEGORIES = [];
+  MENU.forEach((m) => {
+    if (m.type === 'section') CATEGORIES.push({ label: m.label, items: [] });
+    else CATEGORIES[CATEGORIES.length - 1].items.push(m);
+  });
+  const menuCats = $('menuCats');
+  let catSel = 0, itemSel = 0, menuFocus = 'cats', editing = null, itemRows = [];
+
+  CATEGORIES.forEach((c) => {
+    const li = document.createElement('li');
+    li.textContent = c.label;
+    menuCats.appendChild(li);
+  });
 
   function valueLabel(item) {
     if (item.type === 'text') return S[item.key] ? (item.key === 'tmdbKey' ? 'Saved' : S[item.key]) : 'Not set';
@@ -736,46 +987,65 @@
     return opt ? opt[1] : String(S[item.key]);
   }
 
-  function renderMenu() {
-    menuList.innerHTML = '';
-    let selEl = null;
-    MENU.forEach((item) => {
+  function buildItems() {
+    menuList.textContent = '';
+    itemRows = CATEGORIES[catSel].items.map((item) => {
       const li = document.createElement('li');
-      if (item.type === 'section') {
-        li.className = 'section';
-        li.textContent = item.label;
-      } else {
-        const name = document.createElement('span');
-        name.textContent = item.label;
-        const val = document.createElement('span');
-        val.className = 'val';
-        val.textContent = valueLabel(item);
-        li.appendChild(name); li.appendChild(val);
-        if (item.type) li.classList.add(item.type);
-        if (selectable[menuSel] === item) { li.classList.add('sel'); selEl = li; }
-      }
+      if (item.type) li.className = item.type;
+      const name = document.createElement('span');
+      name.textContent = item.label;
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.textContent = valueLabel(item);
+      li.appendChild(name); li.appendChild(val);
       menuList.appendChild(li);
+      return { li, val, item };
     });
-    if (selEl) selEl.scrollIntoView({ block: 'nearest' });
   }
 
-  function openMenu() { menu.classList.remove('hidden'); renderMenu(); }
-  function closeMenu() { menu.classList.add('hidden'); }
-  const menuOpen = () => !menu.classList.contains('hidden');
+  function paintSelection() {
+    [...menuCats.children].forEach((li, i) => li.classList.toggle('sel', i === catSel));
+    menu.classList.toggle('in-items', menuFocus === 'items');
+    itemRows.forEach((r, i) => r.li.classList.toggle('sel', menuFocus === 'items' && i === itemSel));
+    const row = itemRows[itemSel];
+    if (menuFocus === 'items' && row) row.li.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Refresh every visible value (used after resets or logins); cheap: one category only.
+  function renderMenu() {
+    itemRows.forEach((r) => { r.val.textContent = valueLabel(r.item); });
+    paintSelection();
+  }
+
+  function openMenu() {
+    menuFocus = 'cats';
+    buildItems();
+    paintSelection();
+    menu.classList.add('open');
+    pauseForOverlay(true);
+  }
+  function closeMenu() {
+    if (!menu.classList.contains('open')) return;
+    menu.classList.remove('open');
+    pauseForOverlay(false);
+  }
+  const menuOpen = () => menu.classList.contains('open');
 
   function change(dir) {
-    const item = selectable[menuSel];
-    if (!item.options) return;
+    const row = itemRows[itemSel];
+    const item = row && row.item;
+    if (!item || !item.options) return;
     let i = item.options.findIndex((o) => o[0] === S[item.key]);
     i = (i + dir + item.options.length) % item.options.length;
     S[item.key] = item.options[i][0];
+    row.val.textContent = item.options[i][1];
     saveSettings();
     applySetting(item);
-    renderMenu();
   }
 
   function activate() {
-    const item = selectable[menuSel];
+    const item = itemRows[itemSel] && itemRows[itemSel].item;
+    if (!item) return;
     if (item.type === 'action') { item.run(); return; }
     if (item.type === 'text') {
       editing = item;
@@ -801,18 +1071,40 @@
     renderMenu();
   }
 
-  function applySetting(item) {
-    if (['city', 'units', 'weather'].indexOf(item.key) >= 0) updateWeather();
-    if (item.key === 'caption' && current) render(current);
-    if (item.key === 'artMat' && current && current.kind === 'art') render(current);
-    if (item.key === 'interval') scheduleRotate();
-    if (['videos', 'wallList'].indexOf(item.key) >= 0) { wallFileAt = 0; if (S.mode === 'walls') restartShow(); }
-    if (item.key === 'tmdbKey') { shows = null; if (S.tmdbKey) { S.mixNetflix = true; saveSettings(); } restartShow(); }
-    if (item.restart) restartShow();
-    applyHud(); tick();
+  function menuKey(k) {
+    if (menuFocus === 'cats') {
+      if (k === K.UP || k === K.DOWN) {
+        catSel = (catSel + (k === K.UP ? -1 : 1) + CATEGORIES.length) % CATEGORIES.length;
+        itemSel = 0; buildItems();
+      } else if (k === K.RIGHT || k === K.ENTER) { menuFocus = 'items'; itemSel = 0; }
+      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE || k === K.LEFT) { closeMenu(); return; }
+    } else {
+      const item = itemRows[itemSel] && itemRows[itemSel].item;
+      if (k === K.UP) itemSel = Math.max(0, itemSel - 1);
+      else if (k === K.DOWN) itemSel = Math.min(itemRows.length - 1, itemSel + 1);
+      else if (k === K.RIGHT) { change(1); return; }
+      else if (k === K.LEFT) { if (item && item.options) { change(-1); return; } menuFocus = 'cats'; }
+      else if (k === K.ENTER) { activate(); return; }
+      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) menuFocus = 'cats';
+    }
+    paintSelection();
   }
 
-  function applyAll() { applyHud(); tick(); updateWeather(); }
+  function applySetting(item) {
+    if (['city', 'units', 'weather'].indexOf(item.key) >= 0) updateWeather();
+    if (/^auto|^launcher$/.test(item.key)) sendAutoConfig();
+    if (item.key === 'miniPlayer') pollPlayer();
+    if (item.key === 'caption' && current) render(current);
+    if (item.key === 'artMat' && current && current.kind === 'art') render(current);
+    if (item.key === 'interval' && !menuOpen()) scheduleRotate();
+    if (['videos', 'wallList'].indexOf(item.key) >= 0) { wallFileAt = 0; if (S.mode === 'walls') restartShow(); }
+    if (item.key === 'tmdbKey') { shows = null; if (S.tmdbKey) { S.mixNetflix = true; saveSettings(); } restartShow(); }
+    if (item.restart) { clearTimeout(restartTimer); restartTimer = setTimeout(restartShow, 700); }
+    applyHud(); applyLook(); tick();
+  }
+  let restartTimer = 0;
+
+  function applyAll() { applyHud(); applyLook(); tick(); updateWeather(); }
 
   /* ----------------------------- App dock -------------------------------- */
 
@@ -865,9 +1157,11 @@
     view = 'dock'; dockSel = 0;
     renderDock();
     dock.classList.add('show');
+    pauseForOverlay(true);
   }
 
   function closeDock() {
+    if (view) pauseForOverlay(false);
     view = null;
     dock.classList.remove('show');
     grid.classList.remove('show');
@@ -911,6 +1205,223 @@
     }
   }
 
+  /* --------------------- Screensaver behaviour ---------------------------- */
+
+  // When the idle timer opened Ambient, it behaves like a TV screensaver: any
+  // button returns to where the viewer was (Samsung home, or Spotify with the
+  // music still playing). ▲ controls the music, and holding OK opens settings.
+  let screensaver = false, prevApp = '', okDownAt = 0;
+
+  async function checkSession() {
+    try {
+      const s = await getJSON(SERVICE + '/session');
+      if (s.auto && !s.prevApp && S.launcher) {
+        // Launcher mode: replacing Samsung's home, so show the app dock instead of acting as a screensaver.
+        screensaver = false; lastInput = Date.now(); wake(); openDock();
+      } else if (s.auto) { screensaver = true; prevApp = s.prevApp || ''; lastInput = Date.now(); wake(); }
+    } catch (e) { /* helper not running: normal app behaviour */ }
+  }
+
+  function dismiss() {
+    screensaver = false;
+    closeDock(); closePicker(); closeMenu();
+    if (prevApp) {
+      fetch(SERVICE + '/launch?id=' + encodeURIComponent(prevApp)).catch(() => {});
+    } else {
+      try { tizen.application.getCurrentApplication().hide(); } catch (e) { toast('Press Back to leave Ambient'); }
+    }
+  }
+
+  function screensaverKey(e) {
+    const k = e.keyCode;
+    if (k === K.ENTER) { e.preventDefault(); if (!okDownAt) okDownAt = Date.now(); return true; }
+    if (k === K.UP && !player.classList.contains('hidden')) return false; // let ▲ reach the mini player
+    e.preventDefault();
+    dismiss();
+    return true;
+  }
+
+  document.addEventListener('keyup', (e) => {
+    if (e.keyCode !== K.ENTER || !okDownAt) return;
+    const held = Date.now() - okDownAt;
+    okDownAt = 0;
+    if (!screensaver) return;
+    if (held > 700) { screensaver = false; openMenu(); toast('Settings'); } else { dismiss(); }
+  });
+
+  /* ------------------ Premium ambient settings ---------------------------- */
+
+  // Turn the screen dark after a while with no button presses, like the
+  // "Sleep after" option on Samsung Frame / LG Gallery mode.
+  let lastInput = Date.now(), sleeping = false;
+  const sleepEl = $('sleep'), toneEl = $('tone');
+
+  function goToSleep() {
+    sleeping = true;
+    sleepEl.classList.add('on');
+    clearTimeout(rotateTimer);
+    stopScene();
+  }
+
+  function wake() {
+    if (!sleeping) return;
+    sleeping = false;
+    sleepEl.classList.remove('on');
+    if (current && current.kind === 'scene') startScene(current.id);
+    scheduleRotate();
+  }
+
+  function checkSleep() {
+    if (!sleeping && S.sleepAfter > 0 && Date.now() - lastInput > S.sleepAfter * 60000) goToSleep();
+  }
+
+  function applyLook() {
+    toneEl.className = 'tone-' + S.tone;
+    document.body.classList.toggle('motion-reduced', S.motion !== 'full');
+    document.body.classList.toggle('motion-still', S.motion === 'still');
+  }
+
+  /* ------------------------ Picture calibration --------------------------- */
+
+  // Test patterns for tuning the TV's own picture settings by eye. Open from
+  // settings ("Picture calibration"), ◀ ▶ switch patterns, Back exits.
+  const calib = $('calib'), calibCanvas = $('calibCanvas'), calibText = $('calibText');
+  const cctx = calibCanvas.getContext('2d');
+  let calibIndex = 0, calibOpen = false, calibRaf = 0;
+
+  function label(g, text, x, y, size, color) {
+    g.fillStyle = color || '#888';
+    g.font = (size || 22) + 'px "Outfit", sans-serif';
+    g.textAlign = 'center';
+    g.fillText(text, x, y);
+  }
+
+  const PATTERNS = [
+    {
+      name: 'Black level',
+      tip: 'Setting: Brightness and Shadow Detail. Adjust until bar 4 is just barely visible and bar 0 is pure black, the same as the background.',
+      draw(g, w, h) {
+        g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+        const levels = [0, 2, 4, 6, 8, 12, 16, 24];
+        const bw = w / 12;
+        levels.forEach((v, i) => {
+          const x = w * 0.17 + i * bw * 1.05;
+          g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+          g.fillRect(x, h * 0.25, bw, h * 0.45);
+          label(g, String(v), x + bw / 2, h * 0.76, 24, '#555');
+        });
+      }
+    },
+    {
+      name: 'White level',
+      tip: 'Setting: Contrast. Raise it until the bars start to merge, then lower it until you can tell 245, 250 and 255 apart.',
+      draw(g, w, h) {
+        g.fillStyle = 'rgb(200,200,200)'; g.fillRect(0, 0, w, h);
+        const levels = [230, 235, 240, 245, 250, 255];
+        const bw = w / 9;
+        levels.forEach((v, i) => {
+          const x = w * 0.16 + i * bw * 1.05;
+          g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+          g.fillRect(x, h * 0.25, bw, h * 0.45);
+          label(g, String(v), x + bw / 2, h * 0.76, 24, '#555');
+        });
+      }
+    },
+    {
+      name: 'Sharpness',
+      tip: 'Setting: Sharpness. Lower it until the thin lines and letters have no bright or dark outlines (halos). Usually 0 to 4 on Samsung.',
+      draw(g, w, h) {
+        g.fillStyle = 'rgb(128,128,128)'; g.fillRect(0, 0, w, h);
+        for (let i = 0; i < 40; i++) {
+          g.fillStyle = i % 2 ? '#000' : '#fff';
+          g.fillRect(w * 0.1 + i * 2, h * 0.2, 1, h * 0.25);
+          g.fillRect(w * 0.1, h * 0.55 + i * 2, w * 0.2, 1);
+        }
+        g.strokeStyle = '#000'; g.lineWidth = 3;
+        for (let r = 30; r < 200; r += 30) { g.beginPath(); g.arc(w * 0.62, h * 0.42, r, 0, Math.PI * 2); g.stroke(); }
+        label(g, 'Thin text should look clean, with no glow around it', w * 0.62, h * 0.8, 26, '#000');
+        label(g, 'Thin text should look clean, with no glow around it', w * 0.62, h * 0.86, 16, '#000');
+      }
+    },
+    {
+      name: 'Colour',
+      tip: 'Settings: Colour and Colour Tone. Colours should look rich but not glowing. Skin should look natural. Colour 25 and Warm1 or Warm2 is usually right.',
+      draw(g, w, h) {
+        const bars = ['#bfbfbf', '#bfbf00', '#00bfbf', '#00bf00', '#bf00bf', '#bf0000', '#0000bf'];
+        bars.forEach((c, i) => { g.fillStyle = c; g.fillRect(i * w / 7, 0, w / 7 + 1, h * 0.62); });
+        const skins = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#5c3a1e'];
+        skins.forEach((c, i) => { g.fillStyle = c; g.fillRect(i * w / 5, h * 0.62, w / 5 + 1, h * 0.38); });
+      }
+    },
+    {
+      name: 'Smooth gradients',
+      tip: 'Setting: Noise Reduction / Contrast Enhancer. The ramps should be smooth. If you see stripes (banding), lower Contrast Enhancer and keep Noise Reduction Low.',
+      draw(g, w, h) {
+        const ramps = [[1, 1, 1], [1, 0, 0], [0, 1, 0], [0, 0, 1]];
+        ramps.forEach((m, i) => {
+          const gr = g.createLinearGradient(0, 0, w, 0);
+          gr.addColorStop(0, '#000');
+          gr.addColorStop(1, 'rgb(' + m.map((x) => x * 255).join(',') + ')');
+          g.fillStyle = gr;
+          g.fillRect(0, i * h / 4, w, h / 4 + 1);
+        });
+      }
+    },
+    {
+      name: 'Motion (sports)',
+      tip: 'Setting: Picture Clarity. Watch the moving text and ball. Raise Blur Reduction until the text stays readable; add Judder Reduction only until movement is smooth without a "soap opera" look.',
+      motion: true,
+      draw(g, w, h, t) {
+        g.fillStyle = '#1b4d2b'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 4;
+        g.strokeRect(w * 0.05, h * 0.1, w * 0.9, h * 0.8);
+        g.beginPath(); g.moveTo(w / 2, h * 0.1); g.lineTo(w / 2, h * 0.9); g.stroke();
+        const x = (t * w * 0.5) % (w + 400) - 200;
+        g.fillStyle = '#fff';
+        g.font = '600 64px "Outfit", sans-serif'; g.textAlign = 'left';
+        g.fillText('MOTION CLARITY 1234', x, h * 0.3);
+        const bx = w / 2 + Math.sin(t * 2.2) * w * 0.4, by = h * 0.6 + Math.abs(Math.sin(t * 3.1)) * -h * 0.2;
+        g.beginPath(); g.arc(bx, by, 22, 0, Math.PI * 2); g.fill();
+      }
+    }
+  ];
+
+  function drawCalib(now) {
+    const p = PATTERNS[calibIndex];
+    const w = calibCanvas.width, h = calibCanvas.height;
+    p.draw(cctx, w, h, (now || 0) / 1000);
+    if (p.motion && calibOpen) calibRaf = requestAnimationFrame(drawCalib);
+  }
+
+  function showCalib() {
+    cancelAnimationFrame(calibRaf);
+    calibCanvas.width = Math.min(window.innerWidth, 1920);
+    calibCanvas.height = Math.round(calibCanvas.width * window.innerHeight / window.innerWidth);
+    const p = PATTERNS[calibIndex];
+    calibText.innerHTML = '<b>' + (calibIndex + 1) + '/' + PATTERNS.length + '  ' + esc(p.name) + '</b>' + esc(p.tip) +
+      '<span>◀ ▶ next pattern · OK hide/show this text · Back exit</span>';
+    drawCalib(performance.now());
+  }
+
+  function openCalib() {
+    closeMenu();
+    calibOpen = true; calibIndex = 0;
+    pauseForOverlay(true);
+    calib.classList.add('show');
+    calibText.classList.remove('hidden');
+    showCalib();
+  }
+
+  function calibKey(k) {
+    if (k === K.LEFT) { calibIndex = (calibIndex - 1 + PATTERNS.length) % PATTERNS.length; showCalib(); }
+    else if (k === K.RIGHT) { calibIndex = (calibIndex + 1) % PATTERNS.length; showCalib(); }
+    else if (k === K.ENTER) calibText.classList.toggle('hidden');
+    else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) {
+      calibOpen = false; cancelAnimationFrame(calibRaf); calib.classList.remove('show');
+      pauseForOverlay(false);
+    }
+  }
+
   /* ------------------------------ Remote -------------------------------- */
 
   const K = {
@@ -927,6 +1438,9 @@
 
   document.addEventListener('keydown', (e) => {
     const k = e.keyCode;
+    lastInput = Date.now();
+    if (sleeping) { e.preventDefault(); wake(); return; }
+    if (screensaver && !playerFocus && !menuOpen() && screensaverKey(e)) return;
 
     if (editing) {
       if (k === K.ENTER || k === K.IME_DONE) { e.preventDefault(); finishEdit(true); }
@@ -934,19 +1448,12 @@
       return;
     }
 
+    if (calibOpen) { e.preventDefault(); calibKey(k); return; }
+    if (playerFocus) { e.preventDefault(); playerKey(k); return; }
     if (picking) { e.preventDefault(); pickerKey(k); return; }
     if (view) { e.preventDefault(); dockKey(k); return; }
 
-    if (menuOpen()) {
-      e.preventDefault();
-      if (k === K.UP) { menuSel = (menuSel - 1 + selectable.length) % selectable.length; renderMenu(); }
-      else if (k === K.DOWN) { menuSel = (menuSel + 1) % selectable.length; renderMenu(); }
-      else if (k === K.LEFT) change(-1);
-      else if (k === K.RIGHT) change(1);
-      else if (k === K.ENTER) activate();
-      else if (k === K.BACK || k === K.ESC || k === K.BACKSPACE) closeMenu();
-      return;
-    }
+    if (menuOpen()) { e.preventDefault(); menuKey(k); return; }
 
     switch (k) {
       case K.ENTER: e.preventDefault(); openMenu(); break;
@@ -954,7 +1461,12 @@
       case K.LEFT: e.preventDefault(); prev(); break;
       case K.UP:
         e.preventDefault();
-        S.clock = !S.clock; S.date = S.clock; saveSettings(); applyHud();
+        if (!player.classList.contains('hidden')) {
+          playerFocus = true; renderPlayer();
+          toast('◀ previous · OK play/pause · ▶ next · ▼ done', 3500);
+        } else {
+          S.clock = !S.clock; S.date = S.clock; saveSettings(); applyHud();
+        }
         break;
       case K.DOWN: e.preventDefault(); openDock(); break;
       case K.INFO:
@@ -970,7 +1482,10 @@
       case K.GREEN: quickMode('art', 'Paintings'); break;
       case K.YELLOW: quickMode('nature', 'Nature photos'); break;
       case K.BLUE: quickMode('mix', 'Mix of everything'); break;
-      default: break; // Back and other keys keep their normal TV behaviour
+      case K.BACK:
+        if (standalone()) { e.preventDefault(); try { tizen.application.getCurrentApplication().hide(); } catch (err) { /* ignore */ } }
+        break;
+      default: break; // other keys keep their normal TV behaviour
     }
   });
 
@@ -985,6 +1500,20 @@
         webapis.appcommon.setScreenSaver(webapis.appcommon.AppCommonScreenSaverState.SCREEN_SAVER_OFF, () => {}, () => {});
       }
     } catch (e) { /* not available here */ }
+  }
+
+  // Installed as its own TV app (tizen/config.xml) rather than as a TizenBrew module?
+  function standalone() {
+    try { return tizen.application.getAppInfo().packageId === 'AmbientTV1'; } catch (e) { return false; }
+  }
+
+  // The helper runs as its own Tizen service when Ambient is a standalone app.
+  function startHelper() {
+    if (!standalone()) return;
+    try {
+      tizen.application.launchAppControl(new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
+        'AmbientTV1.AmbientHelper', () => setTimeout(sendAutoConfig, 1500), () => {});
+    } catch (e) { /* helper unavailable */ }
   }
 
   function registerKeys() {
@@ -1002,16 +1531,22 @@
   window.addEventListener('resize', () => { if (current && current.kind === 'scene') startScene(current.id); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { stopScene(); }
-    else { keepAwake(); if (current && current.kind === 'scene') startScene(current.id); }
+    else { keepAwake(); checkSession(); if (current && current.kind === 'scene') startScene(current.id); }
   });
 
   registerKeys();
+  startHelper();
   keepAwake();
   applyAll();
+  sendAutoConfig();
+  pollPlayer();
+  setInterval(pollPlayer, 4000);
+  setInterval(checkSleep, 30000);
+  checkSession();
   setInterval(tick, 1000);
   setInterval(pixelShift, 60 * 1000);
   setInterval(updateWeather, 15 * 60 * 1000);
   setInterval(keepAwake, 5 * 60 * 1000);
   next();
-  setTimeout(() => toast('OK: settings  ·  ▼: your apps  ·  ◀ ▶: change', 5000), 1500);
+  setTimeout(() => toast('OK: settings  ·  ▼: your apps  ·  ▲: music  ·  ◀ ▶: change', 5000), 1500);
 })();

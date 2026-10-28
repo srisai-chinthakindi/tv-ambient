@@ -1,7 +1,7 @@
 # Ambient for Samsung TVs
 
-An Ambient / Art mode and a clean app launcher for Samsung Tizen TVs, installed as a
-[TizenBrew](https://github.com/reisxd/TizenBrew) module.
+An Ambient / Art mode and a clean app launcher for Samsung Tizen TVs. It installs as its own TV
+app, or as a [TizenBrew](https://github.com/reisxd/TizenBrew) module.
 
 **What it shows** (choose any mix in settings):
 
@@ -19,6 +19,14 @@ An Ambient / Art mode and a clean app launcher for Samsung Tizen TVs, installed 
 **App dock**: press ▼ to open a launcher that shows only the apps you pin. There are no ads and
 no Samsung TV Plus.
 
+**Auto-start**: when nothing is on screen, or only Spotify, for a chosen time (5 seconds to 5 minutes),
+Ambient opens by itself. You can turn this on or off in Ambient's settings.
+
+**Spotify mini player**: shows your current song below the clock. Press ▲ to control it (◀ previous,
+OK play/pause, ▶ next). It needs a one-time Spotify login, and playback control needs Spotify Premium.
+
+**Clock styles** (like a Mac lock screen): font, weight, colour, and a side-by-side or stacked layout.
+
 The app never plays sound, so Spotify or other music can keep playing.
 
 ## Remote control
@@ -28,17 +36,28 @@ The app never plays sound, so Spotify or other music can keep playing.
 | OK | Settings |
 | ▼ | Your app dock (OK opens an app; "All apps" lets you pin/unpin with Red or ▶❙❙) |
 | ◀ / ▶ | Previous / next wallpaper |
-| ▲ | Show / hide clock |
+| ▲ | Control the Spotify mini player (shows / hides the clock when nothing is playing) |
 | ▶❙❙ | Pause on the current wallpaper |
 | Red / Green / Yellow / Blue | Anime / Paintings / Nature / Mix |
 | Back | Close menus |
 
-## Install on the TV
+## Install on the TV as its own app (recommended)
 
-1. Open **TizenBrew → Module Manager → Add module**.
-2. Choose the **GitHub** type and enter `YOUR-GITHUB-USERNAME/tv-ambient`. (If it only asks for
-   a single name, enter `gh/YOUR-GITHUB-USERNAME/tv-ambient`.)
-3. Open **Ambient** from TizenBrew. In TizenBrew's settings you can make it auto-launch.
+1. On the TV: **Apps → 12345** → set Host PC IP to your phone's IP → restart the TV.
+2. On the phone, start TizenBrew Installer (in Termux: `proot-distro login ubuntu`, then `./tbi`) and
+   open `http://localhost:8091/ui/dist/index.html`. Connect to the TV.
+3. Choose **Install from GitHub** and enter `srisai-chinthakindi/tv-ambient`.
+4. Set Host PC IP back to `127.0.0.1` and restart the TV.
+5. Open **Ambient** from Apps.
+
+Every push to `main` builds `Ambient.wgt` and publishes it as a GitHub release
+(`.github/workflows/release.yml`). To make a new release, raise `version` in `tizen/config.xml`.
+
+## Install as a TizenBrew module
+
+1. Open **TizenBrew → Module Manager → Add GitHub Module**.
+2. Enter `srisai-chinthakindi/tv-ambient`, then press Back to save.
+3. Open **Ambient** from TizenBrew's main screen.
 
 ## Your own wallpapers
 
